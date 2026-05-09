@@ -24,22 +24,28 @@ Hooks.once('ready', async () => {
     });
 });
 
-// GUI Button in Scene Controls (Links)
+// Stabile Einbindung in die Scene Controls
 Hooks.on('getSceneControlButtons', (controls) => {
     if (!game.user.isGM) return;
+
     controls.push({
-        name: "bg3-dialogue",
+        name: "bg3-dialogue-tool",
         title: "BG3 Dialogue System",
         icon: "fas fa-comments",
         layer: "actors",
         visible: true,
-        tools: [{
-            name: "start-dialog",
-            title: "Gespräch starten",
-            icon: "fas fa-play",
-            onClick: () => BG3DialogueSystem.showSelectionDialog(),
-            button: true
-        }]
+        tools: [
+            {
+                name: "start-bg3-conv",
+                title: "Gespräch starten",
+                icon: "fas fa-play",
+                onClick: () => {
+                    // Direkter Aufruf der Funktion
+                    BG3DialogueSystem.showSelectionDialog();
+                },
+                button: true
+            }
+        ]
     });
 });
 
@@ -55,26 +61,7 @@ class BG3DialogueSystem {
         if (!journal) {
             await JournalEntry.create({
                 name: "lore-info",
-                pages: [{ name: "Welt-Aufzeichnungen", type: "text", text: { content: "Beispiel: Ishkandrael wurde gefunden." }}]
-            });
-        }
-
-        let exampleNpc = game.actors.find(a => a.name === "Beispiel NSC" && a.folder?.id === folder.id);
-        if (!exampleNpc) {
-            const exampleDialog = {
-                startNode: {
-                    text: "Seid gegrüßt! Habt ihr das Schwert Ishkandrael schon gefunden?",
-                    options: [
-                        { text: "Ja, wir haben es.", nextNode: "success" },
-                        { text: "Nein, noch nicht.", nextNode: "info" }
-                    ]
-                }
-            };
-            await Actor.create({
-                name: "Beispiel NSC",
-                type: "npc",
-                folder: folder.id,
-                system: { details: { biography: { value: JSON.stringify(exampleDialog, null, 2) }}}
+                pages: [{ name: "Welt-Aufzeichnungen", type: "text", text: { content: "Hier Lore eintragen." }}]
             });
         }
     }
@@ -82,42 +69,80 @@ class BG3DialogueSystem {
     static showSelectionDialog() {
         const folderName = game.settings.get(MOD_ID, 'npcFolder');
         const folder = game.folders.find(f => f.name === folderName && f.type === "Actor");
+        
+        // Hole alle NPCs aus dem Ordner
         const npcs = game.actors.filter(a => a.folder?.id === folder?.id);
         const players = game.users.filter(u => u.active && !u.isGM);
 
-        if (!npcs.length || !players.length) return ui.notifications.warn("NSCs oder Spieler fehlen/offline.");
+        if (npcs.length === 0) {
+            return ui.notifications.warn(`Keine NPCs im Ordner '${folderName}' gefunden.`);
+        }
+        if (players.length === 0) {
+            return ui.notifications.warn("Keine aktiven Spieler online.");
+        }
+
+        let npcOptions = npcs.map(n => `<option value="${n.id}">${n.name}</option>`).join("");
+        let playerOptions = players.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
 
         const content = `
-            <form><div class="form-group"><label>NSC:</label><select name="npcId">${npcs.map(n => `<option value="${n.id}">${n.name}</option>`).join("")}</select></div>
-            <div class="form-group"><label>Spieler:</label><select name="playerId">${players.map(p => `<option value="${p.id}">${p.name}</option>`).join("")}</select></div></form>`;
+            <form>
+                <div class="form-group">
+                    <label>NSC:</label>
+                    <select name="npcId">${npcOptions}</select>
+                </div>
+                <div class="form-group">
+                    <label>Spieler:</label>
+                    <select name="playerId">${playerOptions}</select>
+                </div>
+            </form>
+        `;
 
         new Dialog({
-            title: "BG3 Gespräch starten",
+            title: "BG3 Gesprächskonfiguration",
             content: content,
             buttons: {
-                start: { label: "Senden", callback: (html) => this.initiateDialogue(html.find('[name="npcId"]').val(), html.find('[name="playerId"]').val()) }
+                go: {
+                    label: "Gespräch starten",
+                    callback: (html) => {
+                        const npcId = html.find('[name="npcId"]').val();
+                        const playerId = html.find('[name="playerId"]').val();
+                        this.initiateDialogue(npcId, playerId);
+                    }
+                }
             }
         }).render(true);
     }
 
     static async initiateDialogue(npcId, userId) {
         const npc = game.actors.get(npcId);
-        const rawBio = npc.system.details.biography.value.replace(/(<([^>]+)>)/gi, "");
-        const dialogData = JSON.parse(rawBio);
+        let bioValue = npc.system.details.biography.value || "";
+        
+        // HTML Tags entfernen, um reines JSON zu erhalten
+        const rawJson = bioValue.replace(/(<([^>]+)>)/gi, "").trim();
+        
+        try {
+            const dialogData = JSON.parse(rawJson);
+            
+            game.socket.emit(`module.${MOD_ID}`, {
+                type: "showDialog",
+                npcId: npcId,
+                receiverId: userId,
+                options: dialogData.startNode
+            });
 
-        game.socket.emit(`module.${MOD_ID}`, {
-            type: "showDialog",
-            npcId: npcId,
-            receiverId: userId,
-            options: dialogData.startNode
-        });
-
-        new BG3DialogueWindow(npcId, dialogData.startNode, true).render(true);
+            new BG3DialogueWindow(npcId, dialogData.startNode, true).render(true);
+        } catch (e) {
+            console.error(e);
+            ui.notifications.error("Das Biografie-Feld enthält kein gültiges JSON!");
+        }
     }
 
     static processChoice(data) {
         const npc = game.actors.get(data.npcId);
-        ChatMessage.create({ content: `<b>${npc.name}:</b> ${data.text}`, speaker: { alias: npc.name }});
+        ChatMessage.create({
+            content: `<b>${npc.name}:</b> ${data.text}`,
+            speaker: { alias: npc.name }
+        });
     }
 }
 
@@ -125,7 +150,7 @@ class BG3DialogueWindow extends Application {
     constructor(npcId, data, isObserver = false) {
         super();
         this.npc = game.actors.get(npcId);
-        this.data = data;
+        this.dialogData = data;
         this.isObserver = isObserver;
     }
 
@@ -134,19 +159,33 @@ class BG3DialogueWindow extends Application {
             id: "bg3-dialog-ui",
             template: `modules/${MOD_ID}/templates/dialog.html`,
             width: 700,
-            popOut: true
+            height: "auto",
+            popOut: true,
+            title: "Gespräch"
         });
     }
 
     getData() {
-        return { npcName: this.npc.name, npcImg: this.npc.img, text: this.data.text, options: this.data.options, isObserver: this.isObserver };
+        return {
+            npcName: this.npc.name,
+            npcImg: this.npc.img,
+            text: this.dialogData.text,
+            options: this.dialogData.options,
+            isObserver: this.isObserver
+        };
     }
 
     activateListeners(html) {
         html.find('.dialog-option').click(ev => {
             if (this.isObserver) return;
             const idx = $(ev.currentTarget).data('index');
-            game.socket.emit(`module.${MOD_ID}`, { type: "choiceMade", npcId: this.npc.id, text: this.data.options[idx].text });
+            const selected = this.dialogData.options[idx];
+            
+            game.socket.emit(`module.${MOD_ID}`, {
+                type: "choiceMade",
+                npcId: this.npc.id,
+                text: selected.text
+            });
             this.close();
         });
     }
