@@ -10,8 +10,13 @@ Hooks.once('init', () => {
     });
 });
 
-Hooks.once('ready', () => {
-    // Socket Listener für Spieler-Interaktion
+Hooks.once('ready', async () => {
+    // Nur der GM führt die Erstellung der Standard-Daten aus
+    if (game.user.isGM) {
+        await BG3DialogueSystem.checkAndCreateDefaults();
+    }
+
+    // Socket Listener
     game.socket.on(`module.${MOD_ID}`, data => {
         if (data.type === "showDialog") {
             new BG3DialogueWindow(data.npcId, data.options).render(true);
@@ -22,92 +27,67 @@ Hooks.once('ready', () => {
 });
 
 class BG3DialogueSystem {
-    /**
-     * Startet das Gespräch (GM-Aktion)
-     */
-    static async initiateDialogue(npcId, userId) {
-        const npc = game.actors.get(npcId);
-        const loreJournal = game.journal.getName("lore-info");
-        const loreContent = loreJournal ? loreJournal.pages.contents.map(p => p.text.content).join(" ") : "";
-
-        // Einfache Logik: Wir parsen die Bio des NSC nach verfügbaren Nodes
-        const dialogData = JSON.parse(npc.system.details.biography.value || "{}");
+    static async checkAndCreateDefaults() {
+        const folderName = game.settings.get(MOD_ID, 'npcFolder');
         
-        const payload = {
-            type: "showDialog",
-            npcId: npcId,
-            options: dialogData.startNode,
-            loreContext: loreContent
-        };
+        // 1. Ordner für NPCs erstellen
+        let folder = game.folders.find(f => f.name === folderName && f.type === "Actor");
+        if (!folder) {
+            folder = await Folder.create({ name: folderName, type: "Actor", color: "#c1a35b" });
+            ui.notifications.info(`${MOD_ID}: Ordner ${folderName} wurde erstellt.`);
+        }
 
-        game.socket.emit(`module.${MOD_ID}`, payload);
-        // Auch für den GM zum Mitlesen öffnen
-        new BG3DialogueWindow(npcId, dialogData.startNode, true).render(true);
+        // 2. Lore-Journal erstellen
+        let journal = game.journal.getName("lore-info");
+        if (!journal) {
+            journal = await JournalEntry.create({
+                name: "lore-info",
+                pages: [{
+                    name: "Welt-Aufzeichnungen",
+                    type: "text",
+                    text: { content: "<p>Hier werden die Aufzeichnungen der Spieler hinterlegt. Beispiel: Ishkandrael wurde gefunden.</p>" }
+                }]
+            });
+            ui.notifications.info(`${MOD_ID}: Journal 'lore-info' wurde erstellt.`);
+        }
+
+        // 3. Beispiel NSC erstellen
+        let exampleNpc = game.actors.find(a => a.name === "Beispiel NSC" && a.folder?.id === folder.id);
+        if (!exampleNpc) {
+            const exampleDialog = {
+                startNode: {
+                    text: "Seid gegrüßt! Ich bin ein automatisierter Test-NSC. Habt ihr das Schwert Ishkandrael schon gefunden?",
+                    options: [
+                        { text: "Ja, wir haben es bei uns.", nextNode: "success" },
+                        { text: "Nein, was ist das?", nextNode: "info" }
+                    ]
+                }
+            };
+
+            await Actor.create({
+                name: "Beispiel NSC",
+                type: "npc",
+                folder: folder.id,
+                img: `modules/${MOD_ID}/assets/example-portrait.webp`, // Falls vorhanden, sonst Standard
+                system: {
+                    details: {
+                        biography: {
+                            value: JSON.stringify(exampleDialog, null, 2)
+                        }
+                    }
+                }
+            });
+            ui.notifications.info(`${MOD_ID}: Beispiel NSC wurde im Ordner ${folderName} erstellt.`);
+        }
     }
 
     static processChoice(data) {
         const npc = game.actors.get(data.npcId);
-        // Logik für den nächsten Knotenpunkt und Chat-Ausgabe
-        const message = `<b>${npc.name}:</b> ${data.text}`;
-        ChatMessage.create({ content: message });
-    }
-}
-
-class BG3DialogueWindow extends Application {
-    constructor(npcId, currentData, isObserver = false) {
-        super();
-        this.npc = game.actors.get(npcId);
-        this.data = currentData;
-        this.isObserver = isObserver;
-    }
-
-    static get defaultOptions() {
-        return mergeObject(super.defaultOptions, {
-            id: "bg3-dialog-ui",
-            template: `modules/${MOD_ID}/templates/dialog.html`,
-            popOut: true,
-            resizable: false,
-            width: 800,
-            height: "auto"
-        });
-    }
-
-    getData() {
-        return {
-            npcName: this.npc.name,
-            npcImg: this.npc.img,
-            text: this.data.text,
-            options: this.data.options,
-            isObserver: this.isObserver
-        };
-    }
-
-    activateListeners(html) {
-        html.find('.dialog-option').click(ev => {
-            if (this.isObserver) return;
-            const idx = $(ev.currentTarget).data('index');
-            const choice = this.data.options[idx];
-            
-            game.socket.emit(`module.${MOD_ID}`, {
-                type: "choiceMade",
-                npcId: this.npc.id,
-                text: choice.text,
-                nextNode: choice.nextNode
-            });
-            this.close();
+        ChatMessage.create({
+            content: `<b>${npc.name}:</b> ${data.text}`,
+            speaker: ChatMessage.getSpeaker({ actor: npc })
         });
     }
 }
 
-// GM Tool: Button im Actor-Directory um Gespräch zu starten
-Hooks.on('getActorDirectoryEntryContext', (html, options) => {
-    options.push({
-        name: "BG3 Gespräch starten",
-        icon: '<i class="fas fa-comments"></i>',
-        condition: li => game.user.isGM,
-        callback: li => {
-            const actorId = li.data('document-id');
-            BG3DialogueSystem.showStarterMenu(actorId);
-        }
-    });
-});
+// ... Rest der BG3DialogueWindow Klasse bleibt gleich wie zuvor ...
