@@ -1,7 +1,6 @@
 const MOD_ID = 'bg3-dialogue-system';
 
 Hooks.once('init', () => {
-    // Registrierung der Welt-Einstellungen
     game.settings.register(MOD_ID, 'npcFolder', {
         name: "NPC Folder Name",
         scope: "world",
@@ -12,12 +11,10 @@ Hooks.once('init', () => {
 });
 
 Hooks.once('ready', async () => {
-    // GM erstellt Standard-Ordner und Journale
     if (game.user.isGM) {
         await BG3DialogueSystem.checkAndCreateDefaults();
     }
 
-    // Socket-Handler für eingehende Nachrichten
     game.socket.on(`module.${MOD_ID}`, data => {
         if (data.type === "showDialog" && game.user.id === data.receiverId) {
             new BG3DialogueWindow(data.npcId, data.options).render(true);
@@ -27,26 +24,20 @@ Hooks.once('ready', async () => {
     });
 });
 
-// Integration in die linke Werkzeugleiste (Scene Controls)
+// Fügt den Button sicher in das "Token" Menü auf der linken Seite ein
 Hooks.on('getSceneControlButtons', (controls) => {
     if (!game.user.isGM) return;
 
-    controls.push({
-        name: "bg3-dialogue",
-        title: "BG3 Dialogue System",
-        icon: "fas fa-comments",
-        layer: "tokens", // Muss ein existierender Layer sein (tokens, notes, etc.)
-        visible: true,
-        tools: [
-            {
-                name: "start-bg3-conv",
-                title: "Gespräch starten",
-                icon: "fas fa-play",
-                onClick: () => BG3DialogueSystem.showSelectionDialog(),
-                button: true
-            }
-        ]
-    });
+    const tokenControl = controls.find(c => c.name === "token");
+    if (tokenControl) {
+        tokenControl.tools.push({
+            name: "start-bg3-conv",
+            title: "BG3 Gespräch starten",
+            icon: "fas fa-comments",
+            onClick: () => BG3DialogueSystem.showSelectionDialog(),
+            button: true
+        });
+    }
 });
 
 class BG3DialogueSystem {
@@ -61,7 +52,7 @@ class BG3DialogueSystem {
         if (!journal) {
             await JournalEntry.create({
                 name: "lore-info",
-                pages: [{ name: "Welt-Aufzeichnungen", type: "text", text: { content: "Hier Lore-Einträge hinterlegen." }}]
+                pages: [{ name: "Welt-Aufzeichnungen", type: "text", text: { content: "Hier Lore eintragen." }}]
             });
         }
     }
@@ -81,21 +72,30 @@ class BG3DialogueSystem {
         let npcOptions = npcs.map(n => `<option value="${n.id}">${n.name}</option>`).join("");
         let playerOptions = players.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
 
+        const content = `
+            <form>
+                <div class="form-group">
+                    <label>NSC:</label>
+                    <select name="npcId">${npcOptions}</select>
+                </div>
+                <div class="form-group">
+                    <label>Spieler:</label>
+                    <select name="playerId">${playerOptions}</select>
+                </div>
+            </form>
+        `;
+
         new Dialog({
-            title: "BG3 Gesprächskonfiguration",
-            content: `
-                <form>
-                    <div class="form-group"><label>NPC:</label><select name="npcId">${npcOptions}</select></div>
-                    <div class="form-group"><label>Spieler:</label><select name="playerId">${playerOptions}</select></div>
-                </form>`,
+            title: "BG3 Konfigurator",
+            content: content,
             buttons: {
-                go: {
-                    label: "Senden",
+                start: { 
+                    label: "Senden", 
                     callback: (html) => {
                         const npcId = html.find('[name="npcId"]').val();
                         const playerId = html.find('[name="playerId"]').val();
                         this.initiateDialogue(npcId, playerId);
-                    }
+                    } 
                 }
             }
         }).render(true);
@@ -103,10 +103,12 @@ class BG3DialogueSystem {
 
     static async initiateDialogue(npcId, userId) {
         const npc = game.actors.get(npcId);
-        let bioValue = npc.system.details.biography.value || "";
+        const bioHtml = npc.system.details.biography.value || "";
         
-        // Bereinigung des JSON-Strings von HTML-Tags
-        const rawJson = bioValue.replace(/(<([^>]+)>)/gi, "").trim();
+        // HTML-Entitäten (&quot;) und Tags sicher über den Browser dekodieren
+        const tempDiv = document.createElement("div");
+        tempDiv.innerHTML = bioHtml;
+        const rawJson = (tempDiv.textContent || tempDiv.innerText || "").trim();
         
         try {
             const dialogData = JSON.parse(rawJson);
@@ -119,8 +121,8 @@ class BG3DialogueSystem {
             // GM sieht das Fenster als Observer
             new BG3DialogueWindow(npcId, dialogData.startNode, true).render(true);
         } catch (e) {
-            console.error(e);
-            ui.notifications.error("Das Biografie-Feld des NPCs enthält kein gültiges JSON.");
+            console.error("BG3-Dialog JSON Fehler:", e, "\nRohe Daten:", rawJson);
+            ui.notifications.error("Die Biografie enthält kein valides JSON. Details in der Konsole (F12).");
         }
     }
 
@@ -142,7 +144,7 @@ class BG3DialogueWindow extends Application {
     }
 
     static get defaultOptions() {
-        return mergeObject(super.defaultOptions, {
+        return foundry.utils.mergeObject(super.defaultOptions, {
             id: "bg3-dialog-ui",
             template: `modules/${MOD_ID}/templates/dialog.html`,
             width: 700,
@@ -163,6 +165,7 @@ class BG3DialogueWindow extends Application {
     }
 
     activateListeners(html) {
+        super.activateListeners(html);
         html.find('.dialog-option').click(ev => {
             if (this.isObserver) return;
             const idx = $(ev.currentTarget).data('index');
