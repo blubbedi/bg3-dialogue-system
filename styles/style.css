@@ -1,10 +1,64 @@
-#bg3-dialog-ui { background: rgba(15, 15, 15, 0.95); color: #f0f0f0; border: 2px solid #c1a35b; border-radius: 8px; }
-.bg3-dialog-wrapper { padding: 15px; }
-.bg3-header { display: flex; align-items: center; border-bottom: 1px solid #444; padding-bottom: 10px; }
-.bg3-portrait { width: 60px; height: 60px; border: 2px solid #c1a35b; border-radius: 50%; margin-right: 15px; }
-.bg3-main-text { font-size: 1.25rem; margin: 20px 0; min-height: 50px; }
-.bg3-options-list { list-style: none; padding: 0; }
-.dialog-option { background: rgba(255, 255, 255, 0.1); margin: 5px 0; padding: 12px; cursor: pointer; border-radius: 4px; transition: 0.2s; }
-.dialog-option:hover:not(.disabled) { background: rgba(193, 163, 91, 0.4); }
-.dialog-option.disabled { opacity: 0.5; cursor: default; }
-.opt-number { color: #c1a35b; font-weight: bold; margin-right: 10px; }
+#bg3-dialog-ui {
+    background: rgba(10, 10, 10, 0.98) !important;
+    color: #e8e8e8;
+    border: 2px solid #c1a35b;
+    border-radius: 12px;
+    box-shadow: 0 0 25px rgba(0,0,0,0.8);
+}
+
+.bg3-dialog-wrapper { padding: 20px; }
+
+.bg3-header {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid #c1a35b;
+    padding-bottom: 15px;
+}
+
+.bg3-portrait {
+    width: 70px;
+    height: 70px;
+    border: 2px solid #c1a35b;
+    border-radius: 50%;
+    margin-right: 20px;
+}
+
+.bg3-main-text {
+    font-size: 1.3rem;
+    line-height: 1.5;
+    margin: 25px 0;
+    font-style: italic;
+    color: #fff;
+}
+
+.bg3-options-list {
+    list-style: none;
+    padding: 0;
+}
+
+.dialog-option {
+    background: rgba(193, 163, 91, 0.1);
+    margin: 10px 0;
+    padding: 15px;
+    cursor: pointer;
+    border: 1px solid rgba(193, 163, 91, 0.3);
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.dialog-option:hover:not(.disabled) {
+    background: rgba(193, 163, 91, 0.4);
+    border-color: #c1a35b;
+    transform: translateX(5px);
+}
+
+.dialog-option.disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.opt-number {
+    color: #c1a35b;
+    font-weight: bold;
+    margin-right: 15px;
+}
