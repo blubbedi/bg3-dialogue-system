@@ -1,6 +1,5 @@
 const MOD_ID = 'bg3-dialogue-system';
 
-// Debug-Log Helfer
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
 Hooks.once('init', () => {
@@ -13,7 +12,6 @@ Hooks.once('init', () => {
         default: "BG3-Dialogue-NPCs"
     });
 
-    // FIX: Wir bringen Foundry bei, wie der "add" Befehl im HTML funktioniert
     Handlebars.registerHelper('add', function(a, b) {
         return Number(a) + Number(b);
     });
@@ -26,15 +24,30 @@ Hooks.once('ready', async () => {
     }
 
     game.socket.on(`module.${MOD_ID}`, data => {
+        // Spieler erhält den Dialog-Baum und öffnet ihn
         if (data.type === "showDialog" && game.user.id === data.receiverId) {
-            new BG3DialogueWindow(data.npcId, data.options).render(true);
-        } else if (data.type === "choiceMade" && game.user.isGM) {
+            new BG3DialogueWindow(data.npcId, data.fullTree, data.startNode).render(true);
+        } 
+        // GM postet die Antwort des Spielers in den Chat
+        else if (data.type === "choiceMade" && game.user.isGM) {
             BG3DialogueSystem.processChoice(data);
+        } 
+        // GM aktualisiert sein Beobachter-Fenster
+        else if (data.type === "updateObserver" && game.user.isGM) {
+            const openApp = Object.values(ui.windows).find(app => app instanceof BG3DialogueWindow && app.npc.id === data.npcId && app.isObserver);
+            if (openApp) {
+                openApp.currentNodeKey = data.nextNode;
+                openApp.render(true);
+            }
+        } 
+        // GM schließt sein Beobachter-Fenster
+        else if (data.type === "closeObserver" && game.user.isGM) {
+            const openApp = Object.values(ui.windows).find(app => app instanceof BG3DialogueWindow && app.npc.id === data.npcId && app.isObserver);
+            if (openApp) openApp.close();
         }
     });
 });
 
-// Scene Controls: Robuste Einbindung
 Hooks.on('getSceneControlButtons', (controls) => {
     if (!game.user.isGM) return;
 
@@ -55,13 +68,11 @@ class BG3DialogueSystem {
         const folderName = game.settings.get(MOD_ID, 'npcFolder');
         let folder = game.folders.find(f => f.name === folderName && f.type === "Actor");
         if (!folder) {
-            log(`Erstelle Ordner: ${folderName}`);
             folder = await Folder.create({ name: folderName, type: "Actor", color: "#c1a35b" });
         }
 
         let journal = game.journal.getName("lore-info");
         if (!journal) {
-            log("Erstelle Lore-Journal...");
             await JournalEntry.create({
                 name: "lore-info",
                 pages: [{ name: "Welt-Aufzeichnungen", type: "text", text: { content: "Hier Lore eintragen." }}]
@@ -108,34 +119,39 @@ class BG3DialogueSystem {
         const rawJson = (tempDiv.textContent || tempDiv.innerText || "").trim();
         
         try {
-            const dialogData = JSON.parse(rawJson);
+            const fullTree = JSON.parse(rawJson);
+            // Sende den KOMPLETTEN Baum an den Spieler
             game.socket.emit(`module.${MOD_ID}`, {
                 type: "showDialog",
                 npcId: npcId,
                 receiverId: userId,
-                options: dialogData.startNode
+                fullTree: fullTree,
+                startNode: "startNode"
             });
-            new BG3DialogueWindow(npcId, dialogData.startNode, true).render(true);
+            // GM öffnet sein Fenster mit dem kompletten Baum
+            new BG3DialogueWindow(npcId, fullTree, "startNode", true).render(true);
         } catch (e) {
-            console.error("BG3-Dialog JSON Fehler:", e, "\nRohe Daten:", rawJson);
-            ui.notifications.error("Die Biografie enthält kein valides JSON. Details in der Konsole (F12).");
+            ui.notifications.error("Die Biografie enthält kein valides JSON.");
         }
     }
 
     static processChoice(data) {
         const npc = game.actors.get(data.npcId);
+        const player = game.users.get(data.playerId);
+        const playerName = player ? player.name : "Spieler";
+        
         ChatMessage.create({
-            content: `<b>${npc.name}:</b> ${data.text}`,
-            speaker: { alias: npc.name }
+            content: `<span style="color: #c1a35b; font-size: 0.9em;">[Gespräch mit ${npc.name}]</span><br><b>${playerName}:</b> ${data.text}`
         });
     }
 }
 
 class BG3DialogueWindow extends Application {
-    constructor(npcId, data, isObserver = false) {
+    constructor(npcId, fullTree, currentNodeKey, isObserver = false) {
         super();
         this.npc = game.actors.get(npcId);
-        this.dialogData = data;
+        this.fullTree = fullTree;
+        this.currentNodeKey = currentNodeKey;
         this.isObserver = isObserver;
     }
 
@@ -151,11 +167,12 @@ class BG3DialogueWindow extends Application {
     }
 
     getData() {
+        const node = this.fullTree[this.currentNodeKey];
         return {
             npcName: this.npc.name,
             npcImg: this.npc.img,
-            text: this.dialogData.text,
-            options: this.dialogData.options,
+            text: node ? node.text : "...",
+            options: node && node.options ? node.options : [],
             isObserver: this.isObserver
         };
     }
@@ -164,15 +181,39 @@ class BG3DialogueWindow extends Application {
         super.activateListeners(html);
         html.find('.dialog-option').click(ev => {
             if (this.isObserver) return;
-            const idx = $(ev.currentTarget).data('index');
-            const selected = this.dialogData.options[idx];
             
+            const idx = $(ev.currentTarget).data('index');
+            const node = this.fullTree[this.currentNodeKey];
+            const selected = node.options[idx];
+            
+            // Postet die Entscheidung in den Chat
             game.socket.emit(`module.${MOD_ID}`, {
                 type: "choiceMade",
                 npcId: this.npc.id,
+                playerId: game.user.id,
                 text: selected.text
             });
-            this.close();
+
+            // Prüfen, ob es einen Folge-Knoten gibt
+            if (selected.nextNode && this.fullTree[selected.nextNode]) {
+                // Lokales Update für den Spieler
+                this.currentNodeKey = selected.nextNode;
+                this.render(true);
+
+                // Update-Signal an den GM senden
+                game.socket.emit(`module.${MOD_ID}`, {
+                    type: "updateObserver",
+                    npcId: this.npc.id,
+                    nextNode: selected.nextNode
+                });
+            } else {
+                // Kein Folge-Knoten = Gespräch beenden
+                game.socket.emit(`module.${MOD_ID}`, {
+                    type: "closeObserver",
+                    npcId: this.npc.id
+                });
+                this.close();
+            }
         });
     }
 }
