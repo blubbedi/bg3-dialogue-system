@@ -3,11 +3,9 @@
         <img src="{{npcImg}}" class="bg3-portrait">
         <h2 class="bg3-npc-name">{{npcName}}</h2>
     </div>
-
     <div class="bg3-body">
         <p class="bg3-main-text">{{text}}</p>
     </div>
-
     <div class="bg3-footer">
         <ul class="bg3-options-list">
             {{#each options as |opt i|}}
@@ -16,6 +14,6 @@
                 </li>
             {{/each}}
         </ul>
-        {{#if isObserver}}<p class="observer-tag">GM Modus: Warte auf Spieler...</p>{{/if}}
+        {{#if isObserver}}<p style="color: #c1a35b; text-align: center;">GM-Ansicht (Warten auf Spieler...)</p>{{/if}}
     </div>
 </div>
