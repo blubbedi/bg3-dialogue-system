@@ -1,0 +1,64 @@
+#bg3-dialog-ui {
+    background: rgba(0, 0, 0, 0.85);
+    color: #e0e0e0;
+    border: 2px solid #4a4a4a;
+    border-radius: 10px;
+    box-shadow: 0 0 20px rgba(0,0,0,1);
+}
+
+.bg3-dialog-wrapper {
+    padding: 20px;
+    font-family: 'Signika', sans-serif;
+}
+
+.bg3-header {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid #555;
+    padding-bottom: 10px;
+}
+
+.bg3-portrait {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    border: 2px solid #c1a35b;
+    margin-right: 20px;
+}
+
+.bg3-main-text {
+    font-size: 1.2em;
+    font-style: italic;
+    margin: 20px 0;
+    line-height: 1.4;
+}
+
+.bg3-options-list {
+    list-style: none;
+    padding: 0;
+}
+
+.dialog-option {
+    background: rgba(255, 255, 255, 0.05);
+    margin: 8px 0;
+    padding: 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.dialog-option:hover:not(.disabled) {
+    background: rgba(193, 163, 91, 0.3);
+    color: #fff;
+}
+
+.dialog-option.disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.opt-number {
+    color: #c1a35b;
+    font-weight: bold;
+    margin-right: 10px;
+}

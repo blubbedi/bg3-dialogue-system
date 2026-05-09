@@ -1,0 +1,21 @@
+<div class="bg3-dialog-wrapper">
+    <div class="bg3-header">
+        <img src="{{npcImg}}" class="bg3-portrait">
+        <h2 class="bg3-npc-name">{{npcName}}</h2>
+    </div>
+
+    <div class="bg3-body">
+        <p class="bg3-main-text">{{text}}</p>
+    </div>
+
+    <div class="bg3-footer">
+        <ul class="bg3-options-list">
+            {{#each options as |opt i|}}
+                <li class="dialog-option {{#if ../isObserver}}disabled{{/if}}" data-index="{{i}}">
+                    <span class="opt-number">{{add i 1}}.</span> {{opt.text}}
+                </li>
+            {{/each}}
+        </ul>
+        {{#if isObserver}}<p class="observer-tag">GM Modus: Warte auf Spieler...</p>{{/if}}
+    </div>
+</div>
