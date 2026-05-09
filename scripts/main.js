@@ -1,16 +1,26 @@
 const MOD_ID = 'bg3-dialogue-system';
 
+// Debug-Log Helfer
+function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
+
 Hooks.once('init', () => {
+    log("Initialisiere Einstellungen...");
     game.settings.register(MOD_ID, 'npcFolder', {
-        name: "NPC Folder Name",
+        name: "NPC-Ordner Name",
         scope: "world",
         config: true,
         type: String,
         default: "BG3-Dialogue-NPCs"
     });
+
+    // FIX: Wir bringen Foundry bei, wie der "add" Befehl im HTML funktioniert
+    Handlebars.registerHelper('add', function(a, b) {
+        return Number(a) + Number(b);
+    });
 });
 
 Hooks.once('ready', async () => {
+    log("Foundry bereit. Prüfe Standard-Ordner...");
     if (game.user.isGM) {
         await BG3DialogueSystem.checkAndCreateDefaults();
     }
@@ -24,7 +34,7 @@ Hooks.once('ready', async () => {
     });
 });
 
-// Fügt den Button sicher in das "Token" Menü auf der linken Seite ein
+// Scene Controls: Robuste Einbindung
 Hooks.on('getSceneControlButtons', (controls) => {
     if (!game.user.isGM) return;
 
@@ -45,11 +55,13 @@ class BG3DialogueSystem {
         const folderName = game.settings.get(MOD_ID, 'npcFolder');
         let folder = game.folders.find(f => f.name === folderName && f.type === "Actor");
         if (!folder) {
+            log(`Erstelle Ordner: ${folderName}`);
             folder = await Folder.create({ name: folderName, type: "Actor", color: "#c1a35b" });
         }
 
         let journal = game.journal.getName("lore-info");
         if (!journal) {
+            log("Erstelle Lore-Journal...");
             await JournalEntry.create({
                 name: "lore-info",
                 pages: [{ name: "Welt-Aufzeichnungen", type: "text", text: { content: "Hier Lore eintragen." }}]
@@ -61,40 +73,26 @@ class BG3DialogueSystem {
         const folderName = game.settings.get(MOD_ID, 'npcFolder');
         const folder = game.folders.find(f => f.name === folderName && f.type === "Actor");
         
-        if (!folder) return ui.notifications.error(`Ordner '${folderName}' wurde nicht gefunden.`);
+        if (!folder) return ui.notifications.error(`Ordner '${folderName}' fehlt.`);
 
         const npcs = game.actors.filter(a => a.folder?.id === folder.id);
         const players = game.users.filter(u => u.active && !u.isGM);
 
         if (npcs.length === 0) return ui.notifications.warn("Keine NPCs im BG3-Ordner.");
-        if (players.length === 0) return ui.notifications.warn("Keine aktiven Spieler online.");
+        if (players.length === 0) return ui.notifications.warn("Keine Spieler online.");
 
         let npcOptions = npcs.map(n => `<option value="${n.id}">${n.name}</option>`).join("");
         let playerOptions = players.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
 
-        const content = `
-            <form>
-                <div class="form-group">
-                    <label>NSC:</label>
-                    <select name="npcId">${npcOptions}</select>
-                </div>
-                <div class="form-group">
-                    <label>Spieler:</label>
-                    <select name="playerId">${playerOptions}</select>
-                </div>
-            </form>
-        `;
-
         new Dialog({
             title: "BG3 Konfigurator",
-            content: content,
+            content: `<form><div class="form-group"><label>NSC:</label><select name="npcId">${npcOptions}</select></div>
+                      <div class="form-group"><label>Spieler:</label><select name="playerId">${playerOptions}</select></div></form>`,
             buttons: {
                 start: { 
                     label: "Senden", 
                     callback: (html) => {
-                        const npcId = html.find('[name="npcId"]').val();
-                        const playerId = html.find('[name="playerId"]').val();
-                        this.initiateDialogue(npcId, playerId);
+                        this.initiateDialogue(html.find('[name="npcId"]').val(), html.find('[name="playerId"]').val());
                     } 
                 }
             }
@@ -105,7 +103,6 @@ class BG3DialogueSystem {
         const npc = game.actors.get(npcId);
         const bioHtml = npc.system.details.biography.value || "";
         
-        // HTML-Entitäten (&quot;) und Tags sicher über den Browser dekodieren
         const tempDiv = document.createElement("div");
         tempDiv.innerHTML = bioHtml;
         const rawJson = (tempDiv.textContent || tempDiv.innerText || "").trim();
@@ -118,7 +115,6 @@ class BG3DialogueSystem {
                 receiverId: userId,
                 options: dialogData.startNode
             });
-            // GM sieht das Fenster als Observer
             new BG3DialogueWindow(npcId, dialogData.startNode, true).render(true);
         } catch (e) {
             console.error("BG3-Dialog JSON Fehler:", e, "\nRohe Daten:", rawJson);
