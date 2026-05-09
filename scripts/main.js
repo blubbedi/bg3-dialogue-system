@@ -24,15 +24,15 @@ Hooks.once('ready', async () => {
     });
 });
 
-// Stabile Einbindung in die Scene Controls
+// Korrigierte Scene Controls
 Hooks.on('getSceneControlButtons', (controls) => {
     if (!game.user.isGM) return;
 
     controls.push({
-        name: "bg3-dialogue-tool",
+        name: "bg3-dialogue",
         title: "BG3 Dialogue System",
         icon: "fas fa-comments",
-        layer: "actors",
+        layer: "tokens", // Geändert von 'actors' auf 'tokens', um den 'activate' Fehler zu beheben
         visible: true,
         tools: [
             {
@@ -40,7 +40,6 @@ Hooks.on('getSceneControlButtons', (controls) => {
                 title: "Gespräch starten",
                 icon: "fas fa-play",
                 onClick: () => {
-                    // Direkter Aufruf der Funktion
                     BG3DialogueSystem.showSelectionDialog();
                 },
                 button: true
@@ -70,43 +69,32 @@ class BG3DialogueSystem {
         const folderName = game.settings.get(MOD_ID, 'npcFolder');
         const folder = game.folders.find(f => f.name === folderName && f.type === "Actor");
         
-        // Hole alle NPCs aus dem Ordner
-        const npcs = game.actors.filter(a => a.folder?.id === folder?.id);
+        // Sicherheitsabfrage: Existiert der Ordner?
+        if (!folder) {
+            return ui.notifications.error(`Der Ordner '${folderName}' existiert nicht.`);
+        }
+
+        const npcs = game.actors.filter(a => a.folder?.id === folder.id);
         const players = game.users.filter(u => u.active && !u.isGM);
 
-        if (npcs.length === 0) {
-            return ui.notifications.warn(`Keine NPCs im Ordner '${folderName}' gefunden.`);
-        }
-        if (players.length === 0) {
-            return ui.notifications.warn("Keine aktiven Spieler online.");
-        }
+        if (npcs.length === 0) return ui.notifications.warn(`Keine NPCs im Ordner '${folderName}'.`);
+        if (players.length === 0) return ui.notifications.warn("Keine aktiven Spieler online.");
 
         let npcOptions = npcs.map(n => `<option value="${n.id}">${n.name}</option>`).join("");
         let playerOptions = players.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
 
-        const content = `
-            <form>
-                <div class="form-group">
-                    <label>NSC:</label>
-                    <select name="npcId">${npcOptions}</select>
-                </div>
-                <div class="form-group">
-                    <label>Spieler:</label>
-                    <select name="playerId">${playerOptions}</select>
-                </div>
-            </form>
-        `;
-
         new Dialog({
             title: "BG3 Gesprächskonfiguration",
-            content: content,
+            content: `
+                <form>
+                    <div class="form-group"><label>NSC:</label><select name="npcId">${npcOptions}</select></div>
+                    <div class="form-group"><label>Spieler:</label><select name="playerId">${playerOptions}</select></div>
+                </form>`,
             buttons: {
                 go: {
                     label: "Gespräch starten",
                     callback: (html) => {
-                        const npcId = html.find('[name="npcId"]').val();
-                        const playerId = html.find('[name="playerId"]').val();
-                        this.initiateDialogue(npcId, playerId);
+                        this.initiateDialogue(html.find('[name="npcId"]').val(), html.find('[name="playerId"]').val());
                     }
                 }
             }
@@ -116,24 +104,19 @@ class BG3DialogueSystem {
     static async initiateDialogue(npcId, userId) {
         const npc = game.actors.get(npcId);
         let bioValue = npc.system.details.biography.value || "";
-        
-        // HTML Tags entfernen, um reines JSON zu erhalten
         const rawJson = bioValue.replace(/(<([^>]+)>)/gi, "").trim();
         
         try {
             const dialogData = JSON.parse(rawJson);
-            
             game.socket.emit(`module.${MOD_ID}`, {
                 type: "showDialog",
                 npcId: npcId,
                 receiverId: userId,
                 options: dialogData.startNode
             });
-
             new BG3DialogueWindow(npcId, dialogData.startNode, true).render(true);
         } catch (e) {
-            console.error(e);
-            ui.notifications.error("Das Biografie-Feld enthält kein gültiges JSON!");
+            ui.notifications.error("NPC Biografie enthält kein gültiges JSON!");
         }
     }
 
@@ -179,12 +162,10 @@ class BG3DialogueWindow extends Application {
         html.find('.dialog-option').click(ev => {
             if (this.isObserver) return;
             const idx = $(ev.currentTarget).data('index');
-            const selected = this.dialogData.options[idx];
-            
             game.socket.emit(`module.${MOD_ID}`, {
                 type: "choiceMade",
                 npcId: this.npc.id,
-                text: selected.text
+                text: this.dialogData.options[idx].text
             });
             this.close();
         });
