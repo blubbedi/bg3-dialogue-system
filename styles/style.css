@@ -16,10 +16,14 @@
 }
 
 .bg3-portrait {
-    width: 70px;
-    height: 70px;
     border: 2px solid #c1a35b;
     border-radius: 50%;
+    object-fit: cover;
+}
+
+.npc-portrait {
+    width: 70px;
+    height: 70px;
     margin-right: 20px;
 }
 
@@ -31,15 +35,47 @@
     color: #fff;
 }
 
+/* Neuer Bereich für den Spieler-Charakter */
+.bg3-pc-row {
+    display: flex;
+    align-items: flex-start;
+    border-top: 1px solid #444;
+    padding-top: 20px;
+    margin-top: 10px;
+}
+
+.pc-portrait {
+    width: 50px;
+    height: 50px;
+    border-color: #5b8bc1; /* Blau-Silberne Umrandung zur Unterscheidung */
+    margin-right: 15px;
+    flex-shrink: 0;
+}
+
+.bg3-pc-name {
+    display: block;
+    color: #5b8bc1;
+    font-size: 0.9rem;
+    font-style: italic;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.bg3-options-container {
+    flex-grow: 1;
+}
+
 .bg3-options-list {
     list-style: none;
     padding: 0;
+    margin: 0;
 }
 
 .dialog-option {
     background: rgba(193, 163, 91, 0.1);
-    margin: 10px 0;
-    padding: 15px;
+    margin: 8px 0;
+    padding: 12px;
     cursor: pointer;
     border: 1px solid rgba(193, 163, 91, 0.3);
     border-radius: 6px;
@@ -61,4 +97,16 @@
     color: #c1a35b;
     font-weight: bold;
     margin-right: 15px;
+}
+
+/* Formatierung für den Foundry Chat */
+.bg3-chat-msg {
+    font-size: 1.1em;
+    padding: 4px 0;
+}
+.bg3-chat-msg.npc-msg {
+    color: #8a6c22; /* Gold/Braun für NPC */
+}
+.bg3-chat-msg.pc-msg {
+    color: #2e5a88; /* Bläulich für PC */
 }
