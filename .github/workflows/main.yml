@@ -1,14 +1,15 @@
-name: Release Creation
+name: Auto-Release on Tag
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*' # Der Bot startet, sobald du einen Tag pushst, der mit 'v' beginnt (v1.0, v1.1.2 etc.)
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Das hier gibt dem Bot explizit Schreibrechte
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -33,12 +34,15 @@ jobs:
           EOF
 
       - name: Zip Files
-        # Hier stellen wir sicher, dass nur existierende Ordner gezippt werden
         run: zip -r ./module.zip module.json scripts styles templates README.md
 
-      - name: Update Release Assets
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          name: Release ${{ steps.get_version.outputs.VERSION }}
+          draft: false
+          prerelease: false
           files: |
             module.json
             module.zip
