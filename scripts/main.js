@@ -1,10 +1,8 @@
 const MOD_ID = 'bg3-dialogue-system';
 
-// Debug-Log Helfer
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
 Hooks.once('init', () => {
-    log("Initialisiere Einstellungen...");
     game.settings.register(MOD_ID, 'npcFolder', {
         name: "NPC-Ordner Name",
         scope: "world",
@@ -13,28 +11,23 @@ Hooks.once('init', () => {
         default: "BG3-Dialogue-NPCs"
     });
 
-    // Helper für die Nummerierung der Antwortmöglichkeiten
     Handlebars.registerHelper('add', function(a, b) {
         return Number(a) + Number(b);
     });
 });
 
 Hooks.once('ready', async () => {
-    log("Foundry bereit. Prüfe Standard-Ordner...");
     if (game.user.isGM) {
         await BG3DialogueSystem.checkAndCreateDefaults();
     }
 
     game.socket.on(`module.${MOD_ID}`, data => {
-        // 1. Spieler öffnet das Fenster
         if (data.type === "showDialog" && game.user.id === data.receiverId) {
             new BG3DialogueWindow(data.npcId, data.pcId, data.fullTree, data.startNode).render(true);
         } 
-        // 2. Nur der *aktive* GM verarbeitet Chat-Nachrichten und Logs
         else if (data.type === "choiceMade" && game.user.isGM && game.users.activeGM?.isSelf) {
             BG3DialogueSystem.processChoice(data);
         } 
-        // 3. GM aktualisiert sein Beobachter-Fenster
         else if (data.type === "updateObserver" && game.user.isGM) {
             const openApp = Object.values(ui.windows).find(app => app instanceof BG3DialogueWindow && app.npc.id === data.npcId && app.isObserver);
             if (openApp) {
@@ -42,14 +35,12 @@ Hooks.once('ready', async () => {
                 openApp.render(true);
             }
         } 
-        // 4. GM beendet das Gespräch und speichert das Log
         else if (data.type === "closeObserver" && game.user.isGM && game.users.activeGM?.isSelf) {
             BG3DialogueSystem.endConversation(data.npcId);
         }
     });
 });
 
-// Scene Controls: Fügt den Button in das Token-Menü ein
 Hooks.on('getSceneControlButtons', (controls) => {
     if (!game.user.isGM) return;
     const tokenControl = controls.find(c => c.name === "token");
@@ -65,32 +56,16 @@ Hooks.on('getSceneControlButtons', (controls) => {
 });
 
 class BG3DialogueSystem {
-    // Speicher für aktive Gesprächsverläufe (wird nur vom GM verwaltet)
     static activeSessions = {};
 
     static async checkAndCreateDefaults() {
         const folderName = game.settings.get(MOD_ID, 'npcFolder');
         
-        // 1. Actor Ordner erstellen
         let actorFolder = game.folders.find(f => f.name === folderName && f.type === "Actor");
-        if (!actorFolder) {
-            await Folder.create({ name: folderName, type: "Actor", color: "#c1a35b" });
-        }
+        if (!actorFolder) await Folder.create({ name: folderName, type: "Actor", color: "#c1a35b" });
 
-        // 2. Journal Ordner "Gespräche" erstellen
         let journalFolder = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry");
-        if (!journalFolder) {
-            await Folder.create({ name: "Gespräche", type: "JournalEntry", color: "#c1a35b" });
-        }
-
-        // 3. Basis-Lore Journal erstellen
-        let journal = game.journal.getName("lore-info");
-        if (!journal) {
-            await JournalEntry.create({
-                name: "lore-info",
-                pages: [{ name: "Welt-Aufzeichnungen", type: "text", text: { content: "Hier Lore eintragen." }}]
-            });
-        }
+        if (!journalFolder) await Folder.create({ name: "Gespräche", type: "JournalEntry", color: "#c1a35b" });
     }
 
     static showSelectionDialog() {
@@ -126,7 +101,6 @@ class BG3DialogueSystem {
         const pc = user?.character;
         const pcId = pc ? pc.id : null;
         
-        // HTML-Säuberung, um pures JSON zu erhalten
         const tempDiv = document.createElement("div");
         tempDiv.innerHTML = npc.system.details.biography.value || "";
         const rawJson = (tempDiv.textContent || tempDiv.innerText || "").trim();
@@ -135,30 +109,22 @@ class BG3DialogueSystem {
             const fullTree = JSON.parse(rawJson);
             const startText = fullTree.startNode.text;
 
-            // Session für das Log-Protokoll starten
             this.activeSessions[npcId] = {
                 pcId: pcId,
-                userId: userId, // Wird für die Berechtigungen am Ende benötigt
+                userId: userId,
                 history: [`<b>${npc.name}:</b> ${startText}`]
             };
 
-            // Begrüßung in den Chat posten
             ChatMessage.create({
                 speaker: ChatMessage.getSpeaker({ actor: npc }),
                 content: `<div class="bg3-chat-msg npc-msg"><b>${npc.name}:</b> ${startText}</div>`
             });
 
-            // Signal an Spieler senden
             game.socket.emit(`module.${MOD_ID}`, {
-                type: "showDialog",
-                npcId: npcId,
-                pcId: pcId,
-                receiverId: userId,
-                fullTree: fullTree,
-                startNode: "startNode"
+                type: "showDialog", npcId: npcId, pcId: pcId, receiverId: userId,
+                fullTree: fullTree, startNode: "startNode"
             });
             
-            // Beobachter-Fenster für GM öffnen
             new BG3DialogueWindow(npcId, pcId, fullTree, "startNode", true).render(true);
         } catch (e) {
             console.error(e);
@@ -171,7 +137,6 @@ class BG3DialogueSystem {
         const pc = data.pcId ? game.actors.get(data.pcId) : null;
         const speakerName = pc ? pc.name : (game.users.get(data.playerId)?.name || "Unbekannt");
         
-        // Session-Verlauf aktualisieren
         if (this.activeSessions[data.npcId]) {
             this.activeSessions[data.npcId].history.push(`<b>${speakerName}:</b> ${data.text}`);
             if (data.nextNodeText) {
@@ -179,13 +144,11 @@ class BG3DialogueSystem {
             }
         }
 
-        // Spieler-Antwort im Chat
         ChatMessage.create({
             speaker: pc ? ChatMessage.getSpeaker({ actor: pc }) : { alias: speakerName },
             content: `<div class="bg3-chat-msg pc-msg"><b>${speakerName}:</b> ${data.text}</div>`
         });
 
-        // Nächste NPC-Antwort im Chat
         if (data.nextNodeText) {
             ChatMessage.create({
                 speaker: ChatMessage.getSpeaker({ actor: npc }),
@@ -200,22 +163,13 @@ class BG3DialogueSystem {
             const npc = game.actors.get(npcId);
             const pc = session.pcId ? game.actors.get(session.pcId) : null;
             
-            // Formatierung von Datum und Uhrzeit
-            const date = new Date().toLocaleDateString("de-DE", { 
-                day: '2-digit', month: '2-digit', year: 'numeric', 
-                hour: '2-digit', minute: '2-digit' 
-            });
-            
+            const date = new Date().toLocaleDateString("de-DE", { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
             const partners = `${npc.name} & ${pc ? pc.name : "Unbekannt"}`;
             const folder = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry");
 
-            // Berechtigungen vergeben: GM hat Vollzugriff, der beteiligte Spieler bekommt Leserechte
             let permissions = { default: 0 }; 
-            if (session.userId) {
-                permissions[session.userId] = 2; // 2 = Observer / Beobachter
-            }
+            if (session.userId) permissions[session.userId] = 2;
 
-            // Journal in Foundry anlegen
             await JournalEntry.create({
                 name: `${partners} (${date})`,
                 folder: folder?.id,
@@ -227,11 +181,9 @@ class BG3DialogueSystem {
                 }]
             });
 
-            // Session aus dem Speicher löschen
             delete this.activeSessions[npcId];
         }
 
-        // Beobachter-Fenster des GMs schließen
         const openApp = Object.values(ui.windows).find(app => app instanceof BG3DialogueWindow && app.npc.id === npcId && app.isObserver);
         if (openApp) openApp.close();
     }
@@ -260,46 +212,115 @@ class BG3DialogueWindow extends Application {
 
     getData() {
         const node = this.fullTree[this.currentNodeKey];
+        
+        // Bonus aus dem Charakterbogen lesen und in den Text injizieren
+        const options = (node && node.options ? node.options : []).map(opt => {
+            let displayHtml = opt.text;
+            if (opt.check && this.pc) {
+                const skill = this.pc.system.skills[opt.check];
+                const mod = skill ? skill.total : 0;
+                const modStr = mod >= 0 ? `+${mod}` : `${mod}`;
+                // Sucht nach Text in eckigen Klammern und hängt den Bonus an (z.B. [Überzeugen] -> [Überzeugen +5])
+                displayHtml = opt.text.replace(/\[(.*?)\]/, `[$1 ${modStr}]`);
+            }
+            return { ...opt, displayHtml };
+        });
+        
         return {
             npcName: this.npc.name,
             npcImg: this.npc.img,
             pcName: this.pc ? this.pc.name : null,
             pcImg: this.pc ? this.pc.img : null,
             text: node ? node.text : "...",
-            options: node && node.options ? node.options : [],
+            options: options,
+            isEndNode: options.length === 0,
             isObserver: this.isObserver
         };
     }
 
     activateListeners(html) {
         super.activateListeners(html);
-        html.find('.dialog-option').click(ev => {
-            if (this.isObserver) return; // Klick für GM blockieren
+        
+        html.find('.dialog-option').click(async ev => {
+            if (this.isObserver) return;
             
             const idx = $(ev.currentTarget).data('index');
             const node = this.fullTree[this.currentNodeKey];
             const selected = node.options[idx];
-            const nextNode = selected.nextNode ? this.fullTree[selected.nextNode] : null;
             
-            // Auswahl über Socket an GM senden
+            let nextNodeKey = selected.nextNode;
+            let chatText = selected.text;
+            let rollResultText = "";
+
+            // --- SKILL CHECK LOGIK ---
+            if (selected.check) {
+                if (!this.pc) {
+                    return ui.notifications.warn("Für diese Aktion muss ein Spieler-Charakter (PC) ausgewählt sein!");
+                }
+                
+                const skill = this.pc.system.skills[selected.check];
+                const mod = skill ? skill.total : 0;
+                const modStr = mod >= 0 ? `+${mod}` : `${mod}`;
+                
+                // Formatiert den Text für den Chat sauber
+                chatText = selected.text.replace(/\[(.*?)\]/, `[$1 ${modStr}]`);
+
+                // Würfeln (1d20 + Modifikator)
+                const roll = await new Roll(`1d20 + ${mod}`).evaluate();
+                
+                // 3D Würfel anzeigen, falls das Modul installiert ist
+                if (game.dice3d) await game.dice3d.showForRoll(roll, game.user, true);
+
+                // Ergebnis prüfen
+                const isSuccess = roll.total >= selected.dc;
+                nextNodeKey = isSuccess ? selected.passNode : selected.failNode;
+                
+                // Text für das Journal/Chat Log vorbereiten
+                const resultStr = isSuccess ? "ERFOLG" : "FEHLSCHLAG";
+                const resultColor = isSuccess ? "#4db8ff" : "#ff4d4d"; // Blau oder Rot
+                rollResultText = `<br><span style="color: ${resultColor}; font-size: 0.85em; font-style: normal;">↳ [Wurf: ${roll.total} vs SG ${selected.dc} ➔ <b>${resultStr}</b>]</span>`;
+
+                // Echten Wurf in den Chat posten
+                const skillLabel = CONFIG.DND5E.skills[selected.check]?.label || selected.check.toUpperCase();
+                await roll.toMessage({
+                    speaker: ChatMessage.getSpeaker({ actor: this.pc }),
+                    flavor: `Fertigkeitswurf: ${skillLabel} (SG ${selected.dc})`
+                });
+            }
+
+            // Senden an den GM
             game.socket.emit(`module.${MOD_ID}`, {
                 type: "choiceMade",
                 npcId: this.npc.id,
                 pcId: this.pc ? this.pc.id : null,
                 playerId: game.user.id,
-                text: selected.text,
-                nextNodeText: nextNode ? nextNode.text : null
+                text: chatText + rollResultText,
+                nextNodeText: (nextNodeKey && this.fullTree[nextNodeKey]) ? this.fullTree[nextNodeKey].text : null
             });
 
-            // Dialog weiterführen oder beenden
-            if (nextNode) {
-                this.currentNodeKey = selected.nextNode;
+            // Fenster updaten oder schließen
+            if (nextNodeKey && this.fullTree[nextNodeKey]) {
+                this.currentNodeKey = nextNodeKey;
                 this.render(true);
-                game.socket.emit(`module.${MOD_ID}`, { type: "updateObserver", npcId: this.npc.id, nextNode: selected.nextNode });
+                game.socket.emit(`module.${MOD_ID}`, { type: "updateObserver", npcId: this.npc.id, nextNode: nextNodeKey });
             } else {
                 game.socket.emit(`module.${MOD_ID}`, { type: "closeObserver", npcId: this.npc.id });
                 this.close();
             }
+        });
+
+        html.find('.dialog-close-btn').click(ev => {
+            if (this.isObserver) return;
+            game.socket.emit(`module.${MOD_ID}`, {
+                type: "choiceMade",
+                npcId: this.npc.id,
+                pcId: this.pc ? this.pc.id : null,
+                playerId: game.user.id,
+                text: "<i>*Verlässt das Gespräch*</i>",
+                nextNodeText: null
+            });
+            game.socket.emit(`module.${MOD_ID}`, { type: "closeObserver", npcId: this.npc.id });
+            this.close();
         });
     }
 }

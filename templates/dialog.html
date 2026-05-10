@@ -16,15 +16,25 @@
             
             <div class="bg3-options-container">
                 <span class="bg3-pc-name">
-                    {{#if pcName}}{{pcName}} antwortet:{{else}}Deine Antwort:{{/if}}
+                    {{#if isEndNode}}
+                        Gespräch beendet:
+                    {{else}}
+                        {{#if pcName}}{{pcName}} antwortet:{{else}}Deine Antwort:{{/if}}
+                    {{/if}}
                 </span>
                 
                 <ul class="bg3-options-list">
                     {{#each options as |opt i|}}
                         <li class="dialog-option {{#if ../isObserver}}disabled{{/if}}" data-index="{{i}}">
-                            <span class="opt-number">{{add i 1}}.</span> {{opt.text}}
+                            <span class="opt-number">{{add i 1}}.</span> {{opt.displayHtml}}
                         </li>
                     {{/each}}
+                    
+                    {{#if isEndNode}}
+                        <li class="dialog-close-btn {{#if isObserver}}disabled{{/if}}">
+                            <i class="fas fa-sign-out-alt"></i> Verlassen
+                        </li>
+                    {{/if}}
                 </ul>
             </div>
         </div>
