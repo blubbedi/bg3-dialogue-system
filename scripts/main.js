@@ -2,7 +2,6 @@ const MOD_ID = 'bg3-dialogue-system';
 
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
-// Diese Weiche leitet Befehle ans Netzwerk (Spieler) oder führt sie direkt aus (GM-Test)
 function dispatchSystemEvent(data) {
     if (game.user.isGM) {
         if (data.type === "choiceMade") BG3DialogueSystem.processChoice(data);
@@ -77,19 +76,24 @@ class BG3DialogueSystem {
     static async checkAndCreateDefaults() {
         const folderName = game.settings.get(MOD_ID, 'npcFolder');
         let actorFolder = game.folders.find(f => f.name === folderName && f.type === "Actor");
-        if (!actorFolder) await Folder.create({ name: folderName, type: "Actor", color: "#c1a35b" });
+        if (!actorFolder) actorFolder = await Folder.create({ name: folderName, type: "Actor", color: "#c1a35b" });
 
         let journalFolder = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry");
-        if (!journalFolder) await Folder.create({ name: "Gespräche", type: "JournalEntry", color: "#c1a35b" });
+        if (!journalFolder) journalFolder = await Folder.create({ name: "Gespräche", type: "JournalEntry", color: "#c1a35b" });
         
-        let relFolder = game.folders.find(f => f.name === "Beziehung" && f.folder?.id === journalFolder?.id);
-        if (journalFolder && !relFolder) await Folder.create({ name: "Beziehung", type: "JournalEntry", folder: journalFolder.id, color: "#8b0000" });
+        let relFolder = game.folders.find(f => f.name === "Beziehung" && f.folder?.id === journalFolder.id);
+        if (!relFolder) await Folder.create({ name: "Beziehung", type: "JournalEntry", folder: journalFolder.id, color: "#8b0000" });
+
+        let logsFolder = game.folders.find(f => f.name === "Logs" && f.folder?.id === journalFolder.id);
+        if (!logsFolder) await Folder.create({ name: "Logs", type: "JournalEntry", folder: journalFolder.id, color: "#4db8ff" });
     }
 
     static async getOrCreateRelationship(npcName) {
         let parentFolder = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry");
-        let relFolder = game.folders.find(f => f.name === "Beziehung" && f.folder?.id === parentFolder?.id);
-        if (!relFolder) return { score: 0, tags: [], report: null };
+        if (!parentFolder) parentFolder = await Folder.create({ name: "Gespräche", type: "JournalEntry", color: "#c1a35b" });
+
+        let relFolder = game.folders.find(f => f.name === "Beziehung" && f.folder?.id === parentFolder.id);
+        if (!relFolder) relFolder = await Folder.create({ name: "Beziehung", type: "JournalEntry", folder: parentFolder.id, color: "#8b0000" });
 
         let report = game.journal.find(j => j.name === npcName && j.folder?.id === relFolder.id);
         if (!report) {
@@ -200,12 +204,11 @@ class BG3DialogueSystem {
         const pc = data.pcId ? game.actors.get(data.pcId) : null;
         const speakerName = pc ? pc.name : (game.users.get(data.playerId)?.name || "Unbekannt");
         
-        let systemLog = ""; // Sammelt die Metadaten für das Protokoll
+        let systemLog = ""; 
 
         if (data.ship_mod || data.ship_tag) {
             const relUpdate = await this.updateRelationshipJournal(data.npcId, data.ship_mod || 0, data.ship_tag);
             
-            // Text für das Logbuch generieren
             if (relUpdate) {
                 if (data.ship_mod > 0) systemLog += `[Stimmung verbessert: +${data.ship_mod} ➔ Neu: ${relUpdate.score}] `;
                 else if (data.ship_mod < 0) systemLog += `[Stimmung verschlechtert: ${data.ship_mod} ➔ Neu: ${relUpdate.score}] `;
@@ -247,17 +250,17 @@ class BG3DialogueSystem {
             const date = new Date().toLocaleDateString("de-DE", { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
             
             let parentFolder = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry");
-            let logsFolder = game.folders.find(f => f.name === "Logs" && f.folder?.id === parentFolder?.id);
-            if (parentFolder && !logsFolder) {
-                logsFolder = await Folder.create({ name: "Logs", type: "JournalEntry", folder: parentFolder.id, color: "#4db8ff" });
-            }
+            if (!parentFolder) parentFolder = await Folder.create({ name: "Gespräche", type: "JournalEntry", color: "#c1a35b" });
+
+            let logsFolder = game.folders.find(f => f.name === "Logs" && f.folder?.id === parentFolder.id);
+            if (!logsFolder) logsFolder = await Folder.create({ name: "Logs", type: "JournalEntry", folder: parentFolder.id, color: "#4db8ff" });
 
             let permissions = { default: 0 }; 
             if (session.userId) permissions[session.userId] = 2;
 
             await JournalEntry.create({
                 name: `${npc.name} & ${pc ? pc.name : "Unbekannt"} (${date})`,
-                folder: logsFolder?.id || parentFolder?.id,
+                folder: logsFolder.id,
                 ownership: permissions,
                 pages: [{
                     name: "Protokoll",
@@ -306,7 +309,6 @@ class BG3DialogueWindow extends Application {
             const finalDC = node.reactive_check.dc + this._getDCMod();
             const skillBonus = this.pc ? (this.pc.system.skills[node.reactive_check.skill]?.total || 0) : 0;
             
-            // Gefixt für V12: asynchrones Roll#evaluate ohne obsolete Parameter
             let roll = await new Roll("1d20").evaluate();
             let d20 = roll.total;
             if (d20 === 1 && this._isHalfling()) {
@@ -395,7 +397,6 @@ class BG3DialogueWindow extends Application {
                 
                 const finalDC = selected.dc + this._getDCMod();
                 
-                // Gefixt für V12
                 let roll = await new Roll("1d20").evaluate();
                 let d20 = roll.total;
                 
@@ -428,7 +429,6 @@ class BG3DialogueWindow extends Application {
                 await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: this.pc }), flavor: `Fertigkeitswurf: ${skillLabel} (SG ${finalDC})` });
             }
 
-            // Live-Feedback für Stimmungsänderung
             if (selected.ship_mod) {
                 this.relScore += selected.ship_mod;
                 if (selected.ship_mod > 0) {
