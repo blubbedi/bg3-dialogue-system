@@ -2,33 +2,30 @@ const MOD_ID = 'bg3-dialogue-system';
 
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
-// Weiche für GM-Events
+/**
+ * Kern-Weiche: Delegiert Schreibvorgänge an den GM, 
+ * da Spieler keine Berechtigung für Journale haben.
+ */
 function dispatchSystemEvent(data) {
     if (game.user.isGM) {
         if (data.type === "choiceMade") BG3DialogueSystem.processChoice(data);
         else if (data.type === "closeObserver") BG3DialogueSystem.endConversation(data.npcId);
         else if (data.type === "updateRelationship") BG3DialogueSystem.updateRelationshipJournal(data.npcId, data.mod, data.tag);
     } else {
+        // Spieler sendet nur die Anfrage an den GM
         game.socket.emit(`module.${MOD_ID}`, data);
     }
 }
 
 Hooks.once('init', () => {
     game.settings.register(MOD_ID, 'npcFolder', {
-        name: "NPC-Ordner Name",
-        scope: "world",
-        config: true,
-        type: String,
-        default: "BG3-Dialogue-NPCs"
+        name: "NPC-Ordner Name", scope: "world", config: true, type: String, default: "BG3-Dialogue-NPCs"
     });
-
     Handlebars.registerHelper('add', (a, b) => Number(a) + Number(b));
 });
 
 Hooks.once('ready', async () => {
-    if (game.user.isGM) {
-        await BG3DialogueSystem.checkAndCreateDefaults();
-    }
+    if (game.user.isGM) await BG3DialogueSystem.checkAndCreateDefaults();
 
     game.socket.on(`module.${MOD_ID}`, async data => {
         if (data.type === "showDialog" && game.user.id === data.receiverId) {
@@ -46,12 +43,12 @@ Hooks.once('ready', async () => {
         } else if (data.type === "closeObserver" && game.user.isGM) {
             await BG3DialogueSystem.endConversation(data.npcId);
         } else if (data.type === "updateRelationship" && game.user.isGM) {
+            // Hier empfängt der GM die Anfrage des Spielers und schreibt sie in die DB
             await BG3DialogueSystem.updateRelationshipJournal(data.npcId, data.mod, data.tag);
         }
     });
 });
 
-// Der GUI-Button Hook
 Hooks.on('getSceneControlButtons', (controls) => {
     if (!game.user.isGM) return;
     const tokenControl = controls.find(c => c.name === "token");
@@ -109,7 +106,6 @@ class BG3DialogueSystem {
         const folderName = game.settings.get(MOD_ID, 'npcFolder');
         const folder = game.folders.find(f => f.type === "Actor" && f.name === folderName);
         if (!folder) return ui.notifications.error(`Ordner '${folderName}' nicht gefunden.`);
-
         const npcs = game.actors.filter(a => a.folder?.id === folder.id);
         const players = game.users.filter(u => u.active && !u.isGM);
 
@@ -140,10 +136,7 @@ class BG3DialogueSystem {
         try {
             const fullTree = JSON.parse(rawJson);
             const relData = await this.getOrCreateRelationship(npc.name);
-
             this.activeSessions[npcId] = { pcId: pcId, pcName: pc?.name || user.name, userId: userId, history: [`<b>${npc.name}:</b> ${fullTree.startNode.text}`] };
-
-            ChatMessage.create({ speaker: ChatMessage.getSpeaker({ actor: npc }), content: `<div class="bg3-chat-msg npc-msg"><b>${npc.name}:</b> ${fullTree.startNode.text}</div>` });
 
             if (userId === game.user.id) {
                 new BG3DialogueWindow(npcId, pcId, fullTree, "startNode", false, relData.score, relData.tags).render(true);
@@ -151,7 +144,7 @@ class BG3DialogueSystem {
                 game.socket.emit(`module.${MOD_ID}`, { type: "showDialog", npcId, pcId, receiverId: userId, fullTree, startNode: "startNode", relScore: relData.score, relTags: relData.tags });
                 new BG3DialogueWindow(npcId, pcId, fullTree, "startNode", true, relData.score, relData.tags).render(true);
             }
-        } catch (e) { ui.notifications.error("Biografie-JSON fehlerhaft."); }
+        } catch (e) { ui.notifications.error("JSON fehlerhaft."); }
     }
 
     static async processChoice(data) {
@@ -159,7 +152,6 @@ class BG3DialogueSystem {
         if (!session) return;
         session.history.push(`<b>${data.speaker}:</b> ${data.text}`);
         if (data.nextNodeText) session.history.push(`<b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}`);
-
         ChatMessage.create({ speaker: { alias: data.speaker }, content: `<div class="bg3-chat-msg pc-msg"><b>${data.speaker}:</b> ${data.text}</div>` });
         if (data.nextNodeText) ChatMessage.create({ speaker: ChatMessage.getSpeaker({ actor: game.actors.get(data.npcId) }), content: `<div class="bg3-chat-msg npc-msg"><b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}</div>` });
     }
@@ -196,24 +188,21 @@ class BG3DialogueWindow extends Application {
 
     static get defaultOptions() {
         return foundry.utils.mergeObject(super.defaultOptions, { 
-            id: "bg3-dialog-ui", 
-            template: "modules/bg3-dialogue-system/templates/dialog.html", 
-            width: 700, 
-            height: "auto",
-            resizable: false
+            id: "bg3-dialog-ui", template: "modules/bg3-dialogue-system/templates/dialog.html", width: 700, height: "auto"
         });
     }
 
-    // Wir nutzen render() statt _render() für die Logik, um V12-Kompatibilität zu wahren
     async render(force, options) {
         if (!this.isObserver && force) {
             const node = this.fullTree[this.currentNodeKey];
             if (node) {
-                // Sofort-Update der Beziehung beim Laden des Knotens
+                // UI lokal sofort updaten
+                if (node.ship_mod) this.relScore += node.ship_mod;
+                if (node.ship_tag && !this.relTags.includes(node.ship_tag)) this.relTags.push(node.ship_tag);
+
+                // Datenbank-Schreibvorgang an GM delegieren (Permission-Safe)
                 if (node.ship_mod || node.ship_tag) {
-                    const res = await BG3DialogueSystem.updateRelationshipJournal(this.npc.id, node.ship_mod || 0, node.ship_tag);
-                    this.relScore = res.score;
-                    if (node.ship_tag && !this.relTags.includes(node.ship_tag)) this.relTags.push(node.ship_tag);
+                    dispatchSystemEvent({ type: "updateRelationship", npcId: this.npc.id, mod: node.ship_mod || 0, tag: node.ship_tag });
                 }
                 await this._handleReactiveInsight(node);
             }
@@ -228,7 +217,7 @@ class BG3DialogueWindow extends Application {
             const success = (roll.total + bonus) >= (node.reactive_check.dc + this._getDCMod());
             this.insightResults[this.currentNodeKey] = success;
             if (success && node.reactive_check.ship_tag) {
-                await BG3DialogueSystem.updateRelationshipJournal(this.npc.id, 0, node.reactive_check.ship_tag);
+                dispatchSystemEvent({ type: "updateRelationship", npcId: this.npc.id, mod: 0, tag: node.reactive_check.ship_tag });
                 if (!this.relTags.includes(node.reactive_check.ship_tag)) this.relTags.push(node.reactive_check.ship_tag);
             }
         }
@@ -263,15 +252,13 @@ class BG3DialogueWindow extends Application {
 
             if (opt.check && this.pc) {
                 const roll = await new Roll("1d20").evaluate();
-                const bonus = this.pc.system.skills[opt.check].total;
-                const total = roll.total + bonus;
+                const total = roll.total + this.pc.system.skills[opt.check].total;
                 const success = total >= (opt.dc + this._getDCMod());
                 nextKey = success ? opt.passNode : opt.failNode;
                 resTxt = ` [Wurf: ${roll.total} vs SG ${opt.dc + this._getDCMod()} ➔ ${success ? 'ERFOLG' : 'FEHLSCHLAG'}]`;
             }
 
             dispatchSystemEvent({ type: "choiceMade", npcId: this.npc.id, speaker, text: opt.text + resTxt, nextNodeText: this.fullTree[nextKey]?.text });
-
             if (nextKey) { this.currentNodeKey = nextKey; this.render(true); } 
             else { dispatchSystemEvent({ type: "closeObserver", npcId: this.npc.id }); this.close(); }
         });
