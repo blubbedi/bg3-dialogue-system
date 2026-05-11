@@ -2,7 +2,6 @@ const MOD_ID = 'bg3-dialogue-system';
 
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
-// Weiche für GM-Events (Permission-Safe für Spieler)
 function dispatchSystemEvent(data) {
     if (game.user.isGM) {
         if (data.type === "choiceMade") BG3DialogueSystem.processChoice(data);
@@ -155,14 +154,13 @@ class BG3DialogueSystem {
 
     static async endConversation(npcId) {
         const session = this.activeSessions[npcId];
-        if (!session) return; // Verhindert doppeltes Ausführen
+        if (!session) return;
         
         const logTitle = `${game.actors.get(npcId).name} & ${session.pcName}`;
         let logsFolder = game.folders.find(f => f.name === "Logs");
         let logEntry = game.journal.find(j => j.name === logTitle && j.folder?.id === logsFolder?.id);
         const newContent = `<hr><h3>${new Date().toLocaleString()}</h3>` + session.history.map(h => `<p>${h}</p>`).join("");
         
-        // RECHTE-FIX: Wir geben dem Spieler explizit Besitzer-Rechte (3), damit er das Log sofort in seiner Liste sieht!
         let permissions = { default: 0 };
         if (session.userId) permissions[session.userId] = 3;
 
@@ -170,7 +168,6 @@ class BG3DialogueSystem {
             let page = logEntry.pages.contents[0];
             await page.update({ "text.content": (page.text.content || "") + newContent });
             
-            // Stelle sicher, dass der Spieler auch bei bestehendem Log die Rechte behält
             let currentOwnership = logEntry.ownership || {};
             if (session.userId && currentOwnership[session.userId] !== 3) {
                 currentOwnership[session.userId] = 3;
@@ -184,8 +181,6 @@ class BG3DialogueSystem {
                 pages: [{ name: "Protokoll", type: "text", text: { content: newContent } }] 
             });
         }
-        
-        // Session löschen, damit ein "X" Klick und ein "Verlassen" Klick nicht doppelt loggen
         delete this.activeSessions[npcId];
     }
 }
@@ -201,7 +196,7 @@ class BG3DialogueWindow extends Application {
         this.relScore = relScore;
         this.relTags = relTags;
         this.insightResults = {};
-        this.processedNodes = new Set(); 
+        this.processedNodes = new Set();
     }
 
     static get defaultOptions() {
@@ -210,8 +205,6 @@ class BG3DialogueWindow extends Application {
         });
     }
 
-    // X-BUTTON FIX: Überschreibt die Schließen-Funktion von Foundry!
-    // Egal ob Esc-Taste, das "X" oben rechts oder der Button gedrückt wird: Das Log wird gespeichert.
     async close(options) {
         if (!this.isObserver) {
             dispatchSystemEvent({ type: "closeObserver", npcId: this.npc.id });
@@ -283,7 +276,7 @@ class BG3DialogueWindow extends Application {
         return { 
             npcName: this.npc.name, npcImg: this.npc.img, pcImg: this.pc?.img, pcName: this.pc?.name, text: node?.text, options: opts, 
             relationshipStatus: { class: this.relScore >= 5 ? "friendly" : (this.relScore <= -5 ? "hostile" : "neutral") },
-            showInsight: this.insightResults[this.currentNodeKey], insightText: node?.reactive_check?.success_text, hasInspiration: this.pc?.system.attributes.inspiration
+            showInsight: this.insightResults[this.currentNodeKey], insightText: node?.reactive_check?.success_text
         };
     }
 
@@ -305,20 +298,54 @@ class BG3DialogueWindow extends Application {
                     d20 = roll.total;
                 }
 
+                if (game.dice3d) await game.dice3d.showForRoll(roll, game.user, true);
+
                 const bonus = this.pc.system.skills[opt.check].total;
                 let total = d20 + bonus;
                 const finalDC = opt.dc + this._getDCMod();
 
-                const useInspiration = html.find('#use-inspiration').is(':checked');
-                if (total < finalDC && useInspiration && this.pc.system.attributes.inspiration) {
-                    ui.notifications.warn("✨ Inspiration verbraucht! Schicksal wendet sich...");
-                    await this.pc.update({"system.attributes.inspiration": false});
-                    roll = await new Roll("1d20").evaluate();
-                    d20 = roll.total;
-                    total = d20 + bonus;
-                }
+                // NEU: Interaktive Inspirations-Abfrage bei Fehlschlag!
+                if (total < finalDC && this.pc.system.attributes.inspiration) {
+                    const useInsp = await new Promise(resolve => {
+                        new Dialog({
+                            title: "✨ Inspiration einsetzen?",
+                            content: `<p style="text-align: center; margin-bottom: 15px;">Dein Wurf <b>(${total})</b> war ein <b>Fehlschlag</b> (SG ${finalDC}).<br>Du hast einen Inspirationspunkt! Möchtest du ihn einsetzen, um neu zu würfeln?</p>`,
+                            buttons: {
+                                yes: {
+                                    icon: '<i class="fas fa-dice"></i>',
+                                    label: "Neu würfeln",
+                                    callback: () => resolve(true)
+                                },
+                                no: {
+                                    icon: '<i class="fas fa-times"></i>',
+                                    label: "Akzeptieren",
+                                    callback: () => resolve(false)
+                                }
+                            },
+                            default: "yes",
+                            close: () => resolve(false)
+                        }, { width: 400 }).render(true);
+                    });
 
-                if (game.dice3d) await game.dice3d.showForRoll(roll, game.user, true);
+                    if (useInsp) {
+                        ui.notifications.warn("✨ Inspiration verbraucht! Schicksal wendet sich...");
+                        await this.pc.update({"system.attributes.inspiration": false});
+                        
+                        // Der Reroll!
+                        roll = await new Roll("1d20").evaluate();
+                        d20 = roll.total;
+                        
+                        // Halblingsglück auch beim Reroll triggern
+                        if (d20 === 1 && this._isHalfling()) {
+                            ui.notifications.info("🍀 Halblingsglück! Die 1 wird neu gewürfelt.");
+                            roll = await new Roll("1d20").evaluate();
+                            d20 = roll.total;
+                        }
+                        
+                        if (game.dice3d) await game.dice3d.showForRoll(roll, game.user, true);
+                        total = d20 + bonus;
+                    }
+                }
 
                 const success = total >= finalDC;
                 nextKey = success ? opt.passNode : opt.failNode;
@@ -342,13 +369,13 @@ class BG3DialogueWindow extends Application {
 
             dispatchSystemEvent({ type: "choiceMade", npcId: this.npc.id, speaker, text: opt.text + resTxt, systemLog: systemLog, nextNodeText: nextNode?.text });
             if (nextKey) { this.currentNodeKey = nextKey; this.render(true); } 
-            else { this.close(); } // ruft jetzt automatisch die neue close() methode mit Log-Trigger auf!
+            else { this.close(); } 
         });
 
         html.find('.dialog-close-btn').click(ev => {
             if (this.isObserver) return;
             dispatchSystemEvent({ type: "choiceMade", npcId: this.npc.id, pcId: this.pc?.id, speaker: game.user.name, text: "<i>*Verlässt das Gespräch*</i>", nextNodeText: null });
-            this.close(); // ruft auch hier die neue close() Methode auf
+            this.close(); 
         });
     }
 }
