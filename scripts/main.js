@@ -146,45 +146,46 @@ class BG3DialogueSystem {
         const session = this.activeSessions[data.npcId];
         if (!session) return;
         session.history.push(`<b>${data.speaker}:</b> ${data.text}`);
-        
         if (data.systemLog) session.history.push(`<span style="color: #8b0000; font-size: 0.9em;"><i>${data.systemLog}</i></span>`);
         if (data.nextNodeText) session.history.push(`<b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}`);
-        
+
         ChatMessage.create({ speaker: { alias: data.speaker }, content: `<div class="bg3-chat-msg pc-msg"><b>${data.speaker}:</b> ${data.text}</div>` });
         if (data.nextNodeText) ChatMessage.create({ speaker: ChatMessage.getSpeaker({ actor: game.actors.get(data.npcId) }), content: `<div class="bg3-chat-msg npc-msg"><b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}</div>` });
     }
 
     static async endConversation(npcId) {
         const session = this.activeSessions[npcId];
-        if (!session) return;
+        if (!session) return; // Verhindert doppeltes Ausführen
         
         const logTitle = `${game.actors.get(npcId).name} & ${session.pcName}`;
         let logsFolder = game.folders.find(f => f.name === "Logs");
         let logEntry = game.journal.find(j => j.name === logTitle && j.folder?.id === logsFolder?.id);
         const newContent = `<hr><h3>${new Date().toLocaleString()}</h3>` + session.history.map(h => `<p>${h}</p>`).join("");
         
-        // Berechtigungen setzen (2 = Observer/Lesezugriff)
+        // RECHTE-FIX: Wir geben dem Spieler explizit Besitzer-Rechte (3), damit er das Log sofort in seiner Liste sieht!
         let permissions = { default: 0 };
-        if (session.userId) permissions[session.userId] = 2;
+        if (session.userId) permissions[session.userId] = 3;
 
         if (logEntry) {
             let page = logEntry.pages.contents[0];
             await page.update({ "text.content": (page.text.content || "") + newContent });
             
-            // Wenn der Eintrag schon existiert, stellen wir sicher, dass der Spieler die Leserechte auch behält
+            // Stelle sicher, dass der Spieler auch bei bestehendem Log die Rechte behält
             let currentOwnership = logEntry.ownership || {};
-            if (session.userId && currentOwnership[session.userId] !== 2 && currentOwnership[session.userId] !== 3) {
-                currentOwnership[session.userId] = 2;
+            if (session.userId && currentOwnership[session.userId] !== 3) {
+                currentOwnership[session.userId] = 3;
                 await logEntry.update({ ownership: currentOwnership });
             }
         } else {
             await JournalEntry.create({ 
                 name: logTitle, 
                 folder: logsFolder?.id, 
-                ownership: permissions, // Hier geben wir dem Spieler sofort den Lesezugriff
+                ownership: permissions, 
                 pages: [{ name: "Protokoll", type: "text", text: { content: newContent } }] 
             });
         }
+        
+        // Session löschen, damit ein "X" Klick und ein "Verlassen" Klick nicht doppelt loggen
         delete this.activeSessions[npcId];
     }
 }
@@ -200,7 +201,7 @@ class BG3DialogueWindow extends Application {
         this.relScore = relScore;
         this.relTags = relTags;
         this.insightResults = {};
-        this.processedNodes = new Set(); // Verhindert doppelte Ausführung bei UI-Rerenders
+        this.processedNodes = new Set(); 
     }
 
     static get defaultOptions() {
@@ -209,20 +210,27 @@ class BG3DialogueWindow extends Application {
         });
     }
 
+    // X-BUTTON FIX: Überschreibt die Schließen-Funktion von Foundry!
+    // Egal ob Esc-Taste, das "X" oben rechts oder der Button gedrückt wird: Das Log wird gespeichert.
+    async close(options) {
+        if (!this.isObserver) {
+            dispatchSystemEvent({ type: "closeObserver", npcId: this.npc.id });
+        }
+        return super.close(options);
+    }
+
     async render(force, options) {
         if (!this.isObserver && force) {
             const node = this.fullTree[this.currentNodeKey];
             if (node && !this.processedNodes.has(this.currentNodeKey)) {
                 this.processedNodes.add(this.currentNodeKey);
                 
-                // UI lokal sofort updaten
                 if (node.ship_mod) this.relScore += node.ship_mod;
                 if (node.ship_tag && !this.relTags.includes(node.ship_tag)) this.relTags.push(node.ship_tag);
 
                 if (node.ship_mod > 0) ui.notifications.info(`Die Stimmung von ${this.npc.name} bessert sich.`);
                 else if (node.ship_mod < 0) ui.notifications.warn(`Die Stimmung von ${this.npc.name} verschlechtert sich!`);
 
-                // Datenbank-Schreibvorgang an GM delegieren
                 if (node.ship_mod || node.ship_tag) {
                     dispatchSystemEvent({ type: "updateRelationship", npcId: this.npc.id, mod: node.ship_mod || 0, tag: node.ship_tag });
                 }
@@ -291,7 +299,6 @@ class BG3DialogueWindow extends Application {
                 let roll = await new Roll("1d20").evaluate();
                 let d20 = roll.total;
                 
-                // Halblingsglück
                 if (d20 === 1 && this._isHalfling()) {
                     ui.notifications.info("🍀 Halblingsglück! Die 1 wird neu gewürfelt.");
                     roll = await new Roll("1d20").evaluate();
@@ -302,7 +309,6 @@ class BG3DialogueWindow extends Application {
                 let total = d20 + bonus;
                 const finalDC = opt.dc + this._getDCMod();
 
-                // Inspiration
                 const useInspiration = html.find('#use-inspiration').is(':checked');
                 if (total < finalDC && useInspiration && this.pc.system.attributes.inspiration) {
                     ui.notifications.warn("✨ Inspiration verbraucht! Schicksal wendet sich...");
@@ -317,7 +323,6 @@ class BG3DialogueWindow extends Application {
                 const success = total >= finalDC;
                 nextKey = success ? opt.passNode : opt.failNode;
                 
-                // Gesamtergebnis anzeigen, damit die Mathe stimmt
                 const resultColor = success ? "#4db8ff" : "#ff4d4d";
                 resTxt = `<br><span style="color: ${resultColor}; font-size: 0.85em;">↳ [Wurf: ${total} (W20: ${d20}) vs SG ${finalDC} ➔ <b>${success ? 'ERFOLG' : 'FEHLSCHLAG'}</b>]</span>`;
 
@@ -325,7 +330,6 @@ class BG3DialogueWindow extends Application {
                 await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: this.pc }), flavor: `Fertigkeitswurf: ${skillLabel} (SG ${finalDC})` });
             }
 
-            // GM-Logbuch Text zusammenbauen
             const nextNode = this.fullTree[nextKey];
             let systemLog = "";
             if (nextNode) {
@@ -338,7 +342,13 @@ class BG3DialogueWindow extends Application {
 
             dispatchSystemEvent({ type: "choiceMade", npcId: this.npc.id, speaker, text: opt.text + resTxt, systemLog: systemLog, nextNodeText: nextNode?.text });
             if (nextKey) { this.currentNodeKey = nextKey; this.render(true); } 
-            else { dispatchSystemEvent({ type: "closeObserver", npcId: this.npc.id }); this.close(); }
+            else { this.close(); } // ruft jetzt automatisch die neue close() methode mit Log-Trigger auf!
+        });
+
+        html.find('.dialog-close-btn').click(ev => {
+            if (this.isObserver) return;
+            dispatchSystemEvent({ type: "choiceMade", npcId: this.npc.id, pcId: this.pc?.id, speaker: game.user.name, text: "<i>*Verlässt das Gespräch*</i>", nextNodeText: null });
+            this.close(); // ruft auch hier die neue close() Methode auf
         });
     }
 }
