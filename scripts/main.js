@@ -1,5 +1,8 @@
 const MOD_ID = 'bg3-dialogue-system';
 
+function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
+
+// Weiche für GM-Events
 function dispatchSystemEvent(data) {
     if (game.user.isGM) {
         if (data.type === "choiceMade") BG3DialogueSystem.processChoice(data);
@@ -12,13 +15,21 @@ function dispatchSystemEvent(data) {
 
 Hooks.once('init', () => {
     game.settings.register(MOD_ID, 'npcFolder', {
-        name: "NPC-Ordner Name", scope: "world", config: true, type: String, default: "BG3-Dialogue-NPCs"
+        name: "NPC-Ordner Name",
+        scope: "world",
+        config: true,
+        type: String,
+        default: "BG3-Dialogue-NPCs"
     });
+
     Handlebars.registerHelper('add', (a, b) => Number(a) + Number(b));
 });
 
 Hooks.once('ready', async () => {
-    if (game.user.isGM) await BG3DialogueSystem.checkAndCreateDefaults();
+    if (game.user.isGM) {
+        await BG3DialogueSystem.checkAndCreateDefaults();
+    }
+
     game.socket.on(`module.${MOD_ID}`, async data => {
         if (data.type === "showDialog" && game.user.id === data.receiverId) {
             new BG3DialogueWindow(data.npcId, data.pcId, data.fullTree, data.startNode, false, data.relScore, data.relTags).render(true);
@@ -26,13 +37,33 @@ Hooks.once('ready', async () => {
             await BG3DialogueSystem.processChoice(data);
         } else if (data.type === "updateObserver" && game.user.isGM) {
             const app = Object.values(ui.windows).find(a => a instanceof BG3DialogueWindow && a.npc.id === data.npcId && a.isObserver);
-            if (app) { app.currentNodeKey = data.nextNode; app.relScore = data.relScore; app.relTags = data.relTags; app.render(true); }
+            if (app) { 
+                app.currentNodeKey = data.nextNode; 
+                app.relScore = data.relScore; 
+                app.relTags = data.relTags; 
+                app.render(true); 
+            }
         } else if (data.type === "closeObserver" && game.user.isGM) {
             await BG3DialogueSystem.endConversation(data.npcId);
         } else if (data.type === "updateRelationship" && game.user.isGM) {
             await BG3DialogueSystem.updateRelationshipJournal(data.npcId, data.mod, data.tag);
         }
     });
+});
+
+// Der GUI-Button Hook
+Hooks.on('getSceneControlButtons', (controls) => {
+    if (!game.user.isGM) return;
+    const tokenControl = controls.find(c => c.name === "token");
+    if (tokenControl) {
+        tokenControl.tools.push({
+            name: "start-bg3-conv",
+            title: "BG3 Gespräch starten",
+            icon: "fas fa-comments",
+            onClick: () => BG3DialogueSystem.showSelectionDialog(),
+            button: true
+        });
+    }
 });
 
 class BG3DialogueSystem {
@@ -57,24 +88,80 @@ class BG3DialogueSystem {
 
     static async updateRelationshipJournal(npcId, adjustment = 0, tag = null) {
         const npc = game.actors.get(npcId);
+        if(!npc) return;
         const rel = await this.getOrCreateRelationship(npc.name);
-        let newScore = rel.score + adjustment;
+        let newScore = (rel.score || 0) + adjustment;
         let newTags = [...rel.tags];
         if (tag && !newTags.includes(tag)) newTags.push(tag);
+        
         await rel.report.setFlag(MOD_ID, "relationshipScore", newScore);
         await rel.report.setFlag(MOD_ID, "tags", newTags);
+        
         const status = newScore >= 5 ? "Freundlich" : (newScore <= -5 ? "Feindlich" : "Neutral");
-        await rel.report.pages.contents[0].update({ "text.content": `<h3>Status: ${npc.name}</h3><p>Stimmung: ${newScore} (${status})</p><ul>${newTags.map(t => `<li>${t}</li>`).join("")}</ul>` });
+        const page = rel.report.pages.contents[0];
+        if(page) {
+            await page.update({ "text.content": `<h3>Status: ${npc.name}</h3><p>Stimmung: ${newScore} (${status})</p><ul>${newTags.map(t => `<li>${t}</li>`).join("")}</ul>` });
+        }
         return { score: newScore, tags: newTags };
+    }
+
+    static showSelectionDialog() {
+        const folderName = game.settings.get(MOD_ID, 'npcFolder');
+        const folder = game.folders.find(f => f.type === "Actor" && f.name === folderName);
+        if (!folder) return ui.notifications.error(`Ordner '${folderName}' nicht gefunden.`);
+
+        const npcs = game.actors.filter(a => a.folder?.id === folder.id);
+        const players = game.users.filter(u => u.active && !u.isGM);
+
+        let npcOptions = npcs.map(n => `<option value="${n.id}">${n.name}</option>`).join("");
+        let playerOptions = `<option value="${game.user.id}">GM / Test-Modus</option>`;
+        playerOptions += players.map(p => `<option value="${p.id}">${p.name} (${p.character?.name || "Kein Charakter"})</option>`).join("");
+
+        new Dialog({
+            title: "BG3 Konfigurator",
+            content: `<form><div class="form-group"><label>NSC:</label><select name="npcId">${npcOptions}</select></div>
+                      <div class="form-group"><label>Spieler:</label><select name="playerId">${playerOptions}</select></div></form>`,
+            buttons: {
+                start: { label: "Senden", callback: (html) => this.initiateDialogue(html.find('[name="npcId"]').val(), html.find('[name="playerId"]').val()) }
+            }
+        }).render(true);
+    }
+
+    static async initiateDialogue(npcId, userId) {
+        const npc = game.actors.get(npcId);
+        const user = game.users.get(userId);
+        const pc = user?.character;
+        const pcId = pc ? pc.id : null;
+        
+        const tempDiv = document.createElement("div");
+        tempDiv.innerHTML = npc.system.details.biography.value || "";
+        const rawJson = (tempDiv.textContent || tempDiv.innerText || "").trim();
+        
+        try {
+            const fullTree = JSON.parse(rawJson);
+            const relData = await this.getOrCreateRelationship(npc.name);
+
+            this.activeSessions[npcId] = { pcId: pcId, pcName: pc?.name || user.name, userId: userId, history: [`<b>${npc.name}:</b> ${fullTree.startNode.text}`] };
+
+            ChatMessage.create({ speaker: ChatMessage.getSpeaker({ actor: npc }), content: `<div class="bg3-chat-msg npc-msg"><b>${npc.name}:</b> ${fullTree.startNode.text}</div>` });
+
+            if (userId === game.user.id) {
+                new BG3DialogueWindow(npcId, pcId, fullTree, "startNode", false, relData.score, relData.tags).render(true);
+            } else {
+                game.socket.emit(`module.${MOD_ID}`, { type: "showDialog", npcId, pcId, receiverId: userId, fullTree, startNode: "startNode", relScore: relData.score, relTags: relData.tags });
+                new BG3DialogueWindow(npcId, pcId, fullTree, "startNode", true, relData.score, relData.tags).render(true);
+            }
+        } catch (e) { ui.notifications.error("Biografie-JSON fehlerhaft."); }
     }
 
     static async processChoice(data) {
         const session = this.activeSessions[data.npcId];
-        if (session) {
-            session.history.push(`<b>${data.speaker}:</b> ${data.text}`);
-            if (data.systemLog) session.history.push(`<small><i>${data.systemLog}</i></small>`);
-            if (data.nextNodeText) session.history.push(`<b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}`);
-        }
+        if (!session) return;
+        session.history.push(`<b>${data.speaker}:</b> ${data.text}`);
+        if (data.nextNodeText) session.history.push(`<b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}`);
+
+        ChatMessage.create({ speaker: { alias: data.speaker }, content: `<div class="bg3-chat-msg pc-msg"><b>${data.speaker}:</b> ${data.text}</div>` });
+        if (data.nextNodeText) ChatMessage.create({ speaker: ChatMessage.getSpeaker({ actor: game.actors.get(data.npcId) }), content: `<div class="bg3-chat-msg npc-msg"><b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}</div>` });
     }
 
     static async endConversation(npcId) {
@@ -88,7 +175,7 @@ class BG3DialogueSystem {
             let page = logEntry.pages.contents[0];
             await page.update({ "text.content": (page.text.content || "") + newContent });
         } else {
-            await JournalEntry.create({ name: logTitle, folder: logsFolder?.id, pages: [{ name: "Logs", type: "text", text: { content: newContent } }] });
+            await JournalEntry.create({ name: logTitle, folder: logsFolder?.id, pages: [{ name: "Protokoll", type: "text", text: { content: newContent } }] });
         }
         delete this.activeSessions[npcId];
     }
@@ -108,29 +195,37 @@ class BG3DialogueWindow extends Application {
     }
 
     static get defaultOptions() {
-        return mergeObject(super.defaultOptions, { id: "bg3-dialog-ui", template: "modules/bg3-dialogue-system/templates/dialog.html", width: 700, height: "auto" });
+        return foundry.utils.mergeObject(super.defaultOptions, { 
+            id: "bg3-dialog-ui", 
+            template: "modules/bg3-dialogue-system/templates/dialog.html", 
+            width: 700, 
+            height: "auto",
+            resizable: false
+        });
     }
 
-    async _render(force, options) {
-        const node = this.fullTree[this.currentNodeKey];
-        
-        // NEU: Stimmung & Tags werden SOFORT beim Laden des Knotens verarbeitet
-        if (!this.isObserver && node) {
-            if (node.ship_mod || node.ship_tag) {
-                const res = await BG3DialogueSystem.updateRelationshipJournal(this.npc.id, node.ship_mod || 0, node.ship_tag);
-                this.relScore = res.score;
-                if (node.ship_tag && !this.relTags.includes(node.ship_tag)) this.relTags.push(node.ship_tag);
+    // Wir nutzen render() statt _render() für die Logik, um V12-Kompatibilität zu wahren
+    async render(force, options) {
+        if (!this.isObserver && force) {
+            const node = this.fullTree[this.currentNodeKey];
+            if (node) {
+                // Sofort-Update der Beziehung beim Laden des Knotens
+                if (node.ship_mod || node.ship_tag) {
+                    const res = await BG3DialogueSystem.updateRelationshipJournal(this.npc.id, node.ship_mod || 0, node.ship_tag);
+                    this.relScore = res.score;
+                    if (node.ship_tag && !this.relTags.includes(node.ship_tag)) this.relTags.push(node.ship_tag);
+                }
+                await this._handleReactiveInsight(node);
             }
-            await this._handleReactiveInsight();
         }
-        return super._render(force, options);
+        return super.render(force, options);
     }
 
-    async _handleReactiveInsight() {
-        const node = this.fullTree[this.currentNodeKey];
+    async _handleReactiveInsight(node) {
         if (node.reactive_check && this.insightResults[this.currentNodeKey] === undefined) {
             const roll = await new Roll("1d20").evaluate();
-            const success = (roll.total + (this.pc?.system.skills[node.reactive_check.skill]?.total || 0)) >= (node.reactive_check.dc + this._getDCMod());
+            const bonus = this.pc ? (this.pc.system.skills[node.reactive_check.skill]?.total || 0) : 0;
+            const success = (roll.total + bonus) >= (node.reactive_check.dc + this._getDCMod());
             this.insightResults[this.currentNodeKey] = success;
             if (success && node.reactive_check.ship_tag) {
                 await BG3DialogueSystem.updateRelationshipJournal(this.npc.id, 0, node.reactive_check.ship_tag);
@@ -145,11 +240,14 @@ class BG3DialogueWindow extends Application {
         const node = this.fullTree[this.currentNodeKey];
         const opts = (node?.options || []).filter(o => !o.condition_tag || this.relTags.includes(o.condition_tag)).map(o => {
             let txt = o.text;
-            if (o.check && this.pc) txt = txt.replace(/\[(.*?)\]/, `[$1 ${this.pc.system.skills[o.check].total >= 0 ? '+' : ''}${this.pc.system.skills[o.check].total}]`);
+            if (o.check && this.pc) {
+                const bonus = this.pc.system.skills[o.check].total;
+                txt = txt.replace(/\[(.*?)\]/, `[$1 ${bonus >= 0 ? '+' : ''}${bonus}]`);
+            }
             return { ...o, displayHtml: txt };
         });
         return { 
-            npcName: this.npc.name, npcImg: this.npc.img, pcImg: this.pc?.img, text: node?.text, options: opts, 
+            npcName: this.npc.name, npcImg: this.npc.img, pcImg: this.pc?.img, pcName: this.pc?.name, text: node?.text, options: opts, 
             relationshipStatus: { class: this.relScore >= 5 ? "friendly" : (this.relScore <= -5 ? "hostile" : "neutral") },
             showInsight: this.insightResults[this.currentNodeKey], insightText: node?.reactive_check?.success_text, hasInspiration: this.pc?.system.attributes.inspiration
         };
@@ -159,22 +257,20 @@ class BG3DialogueWindow extends Application {
         super.activateListeners(html);
         html.find('.dialog-option').click(async ev => {
             if (this.isObserver) return;
-            const node = this.fullTree[this.currentNodeKey];
-            const opt = node.options[$(ev.currentTarget).data('index')];
+            const idx = $(ev.currentTarget).data('index');
+            const opt = this.fullTree[this.currentNodeKey].options[idx];
             let nextKey = opt.nextNode, resTxt = "", speaker = this.pc?.name || game.user.name;
 
             if (opt.check && this.pc) {
                 const roll = await new Roll("1d20").evaluate();
-                const total = roll.total + this.pc.system.skills[opt.check].total;
+                const bonus = this.pc.system.skills[opt.check].total;
+                const total = roll.total + bonus;
                 const success = total >= (opt.dc + this._getDCMod());
                 nextKey = success ? opt.passNode : opt.failNode;
                 resTxt = ` [Wurf: ${roll.total} vs SG ${opt.dc + this._getDCMod()} ➔ ${success ? 'ERFOLG' : 'FEHLSCHLAG'}]`;
             }
 
-            dispatchSystemEvent({
-                type: "choiceMade", npcId: this.npc.id, speaker: speaker, text: opt.text + resTxt,
-                nextNodeText: this.fullTree[nextKey]?.text
-            });
+            dispatchSystemEvent({ type: "choiceMade", npcId: this.npc.id, speaker, text: opt.text + resTxt, nextNodeText: this.fullTree[nextKey]?.text });
 
             if (nextKey) { this.currentNodeKey = nextKey; this.render(true); } 
             else { dispatchSystemEvent({ type: "closeObserver", npcId: this.npc.id }); this.close(); }
