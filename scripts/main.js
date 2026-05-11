@@ -2,6 +2,7 @@ const MOD_ID = 'bg3-dialogue-system';
 
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
+// Weiche für Netzwerk vs. lokales GM-Event
 function dispatchSystemEvent(data) {
     if (game.user.isGM) {
         if (data.type === "choiceMade") BG3DialogueSystem.processChoice(data);
@@ -88,7 +89,6 @@ class BG3DialogueSystem {
         if (!logsFolder) await Folder.create({ name: "Logs", type: "JournalEntry", folder: journalFolder.id, color: "#4db8ff" });
     }
 
-    // FIX: Foundry V11+ benötigt JournalEntryPages anstelle von direktem Text!
     static async getOrCreateRelationship(npcName) {
         let parentFolder = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry");
         if (!parentFolder) parentFolder = await Folder.create({ name: "Gespräche", type: "JournalEntry", color: "#c1a35b" });
@@ -117,7 +117,6 @@ class BG3DialogueSystem {
         };
     }
 
-    // FIX: Update schreibt nun korrekt in die JournalEntryPage
     static async updateRelationshipJournal(npcId, adjustment = 0, tag = null) {
         const npc = game.actors.get(npcId);
         if (!npc) return null;
@@ -146,16 +145,14 @@ class BG3DialogueSystem {
 
     static showSelectionDialog() {
         const folderName = game.settings.get(MOD_ID, 'npcFolder');
-        const folder = game.folders.find(f => f.name === folderName && f.type === "Actor");
-        if (!folder) return ui.notifications.error(`Ordner '${folderName}' fehlt.`);
-
-        const npcs = game.actors.filter(a => a.folder?.id === folder.id);
+        const folder = game.folders.find(f => f.name === "Actor" && f.name === folderName);
+        const allFolders = game.folders.filter(f => f.type === "Actor" && f.name === folderName);
+        const npcs = game.actors.filter(a => allFolders.some(f => f.id === a.folder?.id));
         const players = game.users.filter(u => u.active && !u.isGM);
 
         if (npcs.length === 0) return ui.notifications.warn("Keine NPCs im BG3-Ordner.");
 
         let npcOptions = npcs.map(n => `<option value="${n.id}">${n.name}</option>`).join("");
-        
         let playerOptions = `<option value="${game.user.id}">GM / Test-Modus</option>`;
         playerOptions += players.map(p => `<option value="${p.id}">${p.name} (${p.character?.name || "Kein Charakter"})</option>`).join("");
 
@@ -207,7 +204,7 @@ class BG3DialogueSystem {
             }
             
         } catch (e) {
-            console.error(e);
+            log(e);
             ui.notifications.error("Die Biografie enthält kein valides JSON.");
         }
     }
@@ -221,22 +218,18 @@ class BG3DialogueSystem {
 
         if (data.ship_mod || data.ship_tag) {
             const relUpdate = await this.updateRelationshipJournal(data.npcId, data.ship_mod || 0, data.ship_tag);
-            
             if (relUpdate) {
                 if (data.ship_mod > 0) systemLog += `[Stimmung verbessert: +${data.ship_mod} ➔ Neu: ${relUpdate.score}] `;
                 else if (data.ship_mod < 0) systemLog += `[Stimmung verschlechtert: ${data.ship_mod} ➔ Neu: ${relUpdate.score}] `;
-                
                 if (data.ship_tag) systemLog += `[Neues Ereignis gemerkt: "${data.ship_tag}"]`;
             }
         }
 
         if (this.activeSessions[data.npcId]) {
             this.activeSessions[data.npcId].history.push(`<b>${speakerName}:</b> ${data.text}`);
-            
             if (systemLog !== "") {
                 this.activeSessions[data.npcId].history.push(`<span style="color: #8b0000; font-size: 0.9em;"><i>${systemLog}</i></span>`);
             }
-            
             if (data.nextNodeText) {
                 this.activeSessions[data.npcId].history.push(`<b>${npc.name}:</b> ${data.nextNodeText}`);
             }
@@ -260,7 +253,8 @@ class BG3DialogueSystem {
         if (session) {
             const npc = game.actors.get(npcId);
             const pc = session.pcId ? game.actors.get(session.pcId) : null;
-            const date = new Date().toLocaleDateString("de-DE", { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const logTitle = `${npc.name} & ${pc ? pc.name : "Unbekannt"}`;
+            const timestamp = new Date().toLocaleString("de-DE", { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
             
             let parentFolder = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry");
             if (!parentFolder) parentFolder = await Folder.create({ name: "Gespräche", type: "JournalEntry", color: "#c1a35b" });
@@ -268,19 +262,33 @@ class BG3DialogueSystem {
             let logsFolder = game.folders.find(f => f.name === "Logs" && f.folder?.id === parentFolder.id);
             if (!logsFolder) logsFolder = await Folder.create({ name: "Logs", type: "JournalEntry", folder: parentFolder.id, color: "#4db8ff" });
 
-            let permissions = { default: 0 }; 
-            if (session.userId) permissions[session.userId] = 2;
+            // Suche nach existierendem Logbuch
+            let logEntry = game.journal.find(j => j.name === logTitle && j.folder?.id === logsFolder.id);
+            const newHistory = `<hr><h3>Gespräch vom ${timestamp}</h3>` + session.history.map(line => `<p style="margin-bottom: 5px;">${line}</p>`).join("");
 
-            await JournalEntry.create({
-                name: `${npc.name} & ${pc ? pc.name : "Unbekannt"} (${date})`,
-                folder: logsFolder.id,
-                ownership: permissions,
-                pages: [{
-                    name: "Protokoll",
-                    type: "text",
-                    text: { content: session.history.map(line => `<p style="margin-bottom: 5px;">${line}</p>`).join("") }
-                }]
-            });
+            if (logEntry) {
+                let page = logEntry.pages.contents[0];
+                const oldContent = page ? page.text.content : "";
+                if (page) {
+                    await page.update({ "text.content": oldContent + newHistory });
+                } else {
+                    await JournalEntryPage.create({ name: "Protokoll", type: "text", text: { content: newHistory } }, { parent: logEntry });
+                }
+            } else {
+                let permissions = { default: 0 }; 
+                if (session.userId) permissions[session.userId] = 2;
+
+                await JournalEntry.create({
+                    name: logTitle,
+                    folder: logsFolder.id,
+                    ownership: permissions,
+                    pages: [{
+                        name: "Protokoll",
+                        type: "text",
+                        text: { content: newHistory }
+                    }]
+                });
+            }
             delete this.activeSessions[npcId];
         }
 
@@ -349,26 +357,20 @@ class BG3DialogueWindow extends Application {
 
     _isHalfling() {
         if (!this.pc) return false;
-        const raceDetails = this.pc.system.details.race;
         const raceItem = this.pc.items.find(i => i.type === "race");
-        const raceStr = raceItem ? raceItem.name.toLowerCase() : (typeof raceDetails === 'string' ? raceDetails.toLowerCase() : "");
-        return raceStr.includes("halbling") || raceStr.includes("halfling") || this.pc.items.some(i => i.name.toLowerCase().includes("halfling"));
+        const raceStr = raceItem ? raceItem.name.toLowerCase() : (this.pc.system.details.race?.toLowerCase() || "");
+        return raceStr.includes("halbling") || raceStr.includes("halfling");
     }
 
     getData() {
         const node = this.fullTree[this.currentNodeKey];
-        
-        let filteredOptions = (node && node.options ? node.options : []).filter(opt => {
-            if (opt.condition_tag && !this.relTags.includes(opt.condition_tag)) return false;
-            return true;
-        });
+        let filteredOptions = (node?.options || []).filter(opt => !opt.condition_tag || this.relTags.includes(opt.condition_tag));
 
         const options = filteredOptions.map(opt => {
             let displayHtml = opt.text;
             if (opt.check && this.pc) {
                 const mod = this.pc.system.skills[opt.check]?.total || 0;
-                const modStr = mod >= 0 ? `+${mod}` : `${mod}`;
-                displayHtml = opt.text.replace(/\[(.*?)\]/, `[$1 ${modStr}]`);
+                displayHtml = opt.text.replace(/\[(.*?)\]/, `[$1 ${mod >= 0 ? '+' : ''}${mod}]`);
             }
             return { ...opt, displayHtml };
         });
@@ -407,14 +409,13 @@ class BG3DialogueWindow extends Application {
             if (selected.check && this.pc) {
                 const mod = this.pc.system.skills[selected.check]?.total || 0;
                 chatText = selected.text.replace(/\[(.*?)\]/, `[$1 ${mod >= 0 ? '+' : ''}${mod}]`);
-                
                 const finalDC = selected.dc + this._getDCMod();
                 
                 let roll = await new Roll("1d20").evaluate();
                 let d20 = roll.total;
                 
                 if (d20 === 1 && this._isHalfling()) {
-                    ui.notifications.info("🍀 Halblingsglück! Die 1 wird neu gewürfelt.");
+                    ui.notifications.info("🍀 Halblingsglück!");
                     roll = await new Roll("1d20").evaluate();
                     d20 = roll.total;
                 }
@@ -423,7 +424,7 @@ class BG3DialogueWindow extends Application {
                 const useInspiration = html.find('#use-inspiration').is(':checked');
                 
                 if (total < finalDC && useInspiration && this.pc.system.attributes.inspiration) {
-                    ui.notifications.warn("✨ Inspiration verbraucht! Schicksal wendet sich...");
+                    ui.notifications.warn("✨ Inspiration genutzt!");
                     await this.pc.update({"system.attributes.inspiration": false});
                     roll = await new Roll("1d20").evaluate();
                     d20 = roll.total;
@@ -434,7 +435,6 @@ class BG3DialogueWindow extends Application {
 
                 const isSuccess = total >= finalDC;
                 nextNodeKey = isSuccess ? selected.passNode : selected.failNode;
-                
                 const resultColor = isSuccess ? "#4db8ff" : "#ff4d4d";
                 rollResultText = `<br><span style="color: ${resultColor}; font-size: 0.85em;">↳ [Wurf: ${roll.total} vs SG ${finalDC} (Basis ${selected.dc}) ➔ <b>${isSuccess ? "ERFOLG" : "FEHLSCHLAG"}</b>]</span>`;
 
@@ -444,15 +444,10 @@ class BG3DialogueWindow extends Application {
 
             if (selected.ship_mod) {
                 this.relScore += selected.ship_mod;
-                if (selected.ship_mod > 0) {
-                    ui.notifications.info(`Die Stimmung von ${this.npc.name} bessert sich.`);
-                } else if (selected.ship_mod < 0) {
-                    ui.notifications.warn(`Die Stimmung von ${this.npc.name} verschlechtert sich!`);
-                }
+                if (selected.ship_mod > 0) ui.notifications.info(`Die Stimmung von ${this.npc.name} bessert sich.`);
+                else if (selected.ship_mod < 0) ui.notifications.warn(`Die Stimmung von ${this.npc.name} verschlechtert sich!`);
             }
-            if (selected.ship_tag) {
-                this.relTags.push(selected.ship_tag);
-            }
+            if (selected.ship_tag) this.relTags.push(selected.ship_tag);
 
             dispatchSystemEvent({
                 type: "choiceMade", npcId: this.npc.id, pcId: this.pc ? this.pc.id : null, playerId: game.user.id,
