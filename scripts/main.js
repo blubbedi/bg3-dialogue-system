@@ -88,6 +88,7 @@ class BG3DialogueSystem {
         if (!logsFolder) await Folder.create({ name: "Logs", type: "JournalEntry", folder: journalFolder.id, color: "#4db8ff" });
     }
 
+    // FIX: Foundry V11+ benötigt JournalEntryPages anstelle von direktem Text!
     static async getOrCreateRelationship(npcName) {
         let parentFolder = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry");
         if (!parentFolder) parentFolder = await Folder.create({ name: "Gespräche", type: "JournalEntry", color: "#c1a35b" });
@@ -98,8 +99,13 @@ class BG3DialogueSystem {
         let report = game.journal.find(j => j.name === npcName && j.folder?.id === relFolder.id);
         if (!report) {
             report = await JournalEntry.create({
-                name: npcName, folder: relFolder.id,
-                content: `<h3>Status: ${npcName}</h3><p>Stimmung: 0 (Neutral)</p><ul></ul>`
+                name: npcName, 
+                folder: relFolder.id,
+                pages: [{
+                    name: "Status",
+                    type: "text",
+                    text: { content: `<h3>Status: ${npcName}</h3><p>Stimmung: 0 (Neutral)</p><ul></ul>` }
+                }]
             });
             await report.setFlag(MOD_ID, "relationshipScore", 0);
             await report.setFlag(MOD_ID, "tags", []);
@@ -111,6 +117,7 @@ class BG3DialogueSystem {
         };
     }
 
+    // FIX: Update schreibt nun korrekt in die JournalEntryPage
     static async updateRelationshipJournal(npcId, adjustment = 0, tag = null) {
         const npc = game.actors.get(npcId);
         if (!npc) return null;
@@ -125,9 +132,15 @@ class BG3DialogueSystem {
         await relData.report.setFlag(MOD_ID, "tags", newTags);
 
         const status = newScore >= 5 ? "Freundlich" : (newScore <= -5 ? "Feindlich" : "Neutral");
-        await relData.report.update({
-            content: `<h3>Status: ${npc.name}</h3><p>Stimmung: ${newScore} (${status})</p><h4>Ereignisse:</h4><ul>${newTags.map(t => `<li>${t}</li>`).join("")}</ul>`
-        });
+        const newContent = `<h3>Status: ${npc.name}</h3><p>Stimmung: ${newScore} (${status})</p><h4>Ereignisse:</h4><ul>${newTags.map(t => `<li>${t}</li>`).join("")}</ul>`;
+
+        let page = relData.report.pages.contents[0];
+        if (page) {
+            await page.update({ "text.content": newContent });
+        } else {
+            await JournalEntryPage.create({ name: "Status", type: "text", text: { content: newContent } }, { parent: relData.report });
+        }
+        
         return { score: newScore, tags: newTags };
     }
 
