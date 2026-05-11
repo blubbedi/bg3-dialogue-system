@@ -146,9 +146,10 @@ class BG3DialogueSystem {
         const session = this.activeSessions[data.npcId];
         if (!session) return;
         session.history.push(`<b>${data.speaker}:</b> ${data.text}`);
+        
         if (data.systemLog) session.history.push(`<span style="color: #8b0000; font-size: 0.9em;"><i>${data.systemLog}</i></span>`);
         if (data.nextNodeText) session.history.push(`<b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}`);
-
+        
         ChatMessage.create({ speaker: { alias: data.speaker }, content: `<div class="bg3-chat-msg pc-msg"><b>${data.speaker}:</b> ${data.text}</div>` });
         if (data.nextNodeText) ChatMessage.create({ speaker: ChatMessage.getSpeaker({ actor: game.actors.get(data.npcId) }), content: `<div class="bg3-chat-msg npc-msg"><b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}</div>` });
     }
@@ -156,15 +157,33 @@ class BG3DialogueSystem {
     static async endConversation(npcId) {
         const session = this.activeSessions[npcId];
         if (!session) return;
+        
         const logTitle = `${game.actors.get(npcId).name} & ${session.pcName}`;
         let logsFolder = game.folders.find(f => f.name === "Logs");
         let logEntry = game.journal.find(j => j.name === logTitle && j.folder?.id === logsFolder?.id);
         const newContent = `<hr><h3>${new Date().toLocaleString()}</h3>` + session.history.map(h => `<p>${h}</p>`).join("");
+        
+        // Berechtigungen setzen (2 = Observer/Lesezugriff)
+        let permissions = { default: 0 };
+        if (session.userId) permissions[session.userId] = 2;
+
         if (logEntry) {
             let page = logEntry.pages.contents[0];
             await page.update({ "text.content": (page.text.content || "") + newContent });
+            
+            // Wenn der Eintrag schon existiert, stellen wir sicher, dass der Spieler die Leserechte auch behält
+            let currentOwnership = logEntry.ownership || {};
+            if (session.userId && currentOwnership[session.userId] !== 2 && currentOwnership[session.userId] !== 3) {
+                currentOwnership[session.userId] = 2;
+                await logEntry.update({ ownership: currentOwnership });
+            }
         } else {
-            await JournalEntry.create({ name: logTitle, folder: logsFolder?.id, pages: [{ name: "Protokoll", type: "text", text: { content: newContent } }] });
+            await JournalEntry.create({ 
+                name: logTitle, 
+                folder: logsFolder?.id, 
+                ownership: permissions, // Hier geben wir dem Spieler sofort den Lesezugriff
+                pages: [{ name: "Protokoll", type: "text", text: { content: newContent } }] 
+            });
         }
         delete this.activeSessions[npcId];
     }
@@ -298,7 +317,7 @@ class BG3DialogueWindow extends Application {
                 const success = total >= finalDC;
                 nextKey = success ? opt.passNode : opt.failNode;
                 
-                // FIX: Gesamtergebnis anzeigen, damit die Mathe stimmt!
+                // Gesamtergebnis anzeigen, damit die Mathe stimmt
                 const resultColor = success ? "#4db8ff" : "#ff4d4d";
                 resTxt = `<br><span style="color: ${resultColor}; font-size: 0.85em;">↳ [Wurf: ${total} (W20: ${d20}) vs SG ${finalDC} ➔ <b>${success ? 'ERFOLG' : 'FEHLSCHLAG'}</b>]</span>`;
 
