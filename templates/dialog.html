@@ -1,14 +1,30 @@
 <div class="bg3-dialog-wrapper">
     <div class="bg3-header">
         <img src="{{npcImg}}" class="bg3-portrait npc-portrait">
-        <h2 class="bg3-npc-name">{{npcName}}</h2>
+        <div class="header-info">
+            <h2 class="bg3-npc-name">{{npcName}}</h2>
+            <div class="rel-indicator status-{{relationshipStatus.class}}" title="Stimmung: {{relationshipStatus.name}}"></div>
+        </div>
     </div>
     
     <div class="bg3-body">
-        <p class="bg3-main-text">{{text}}</p>
+        <p class="bg3-main-text">{{{text}}}</p>
+        
+        {{#if showInsight}}
+            <div class="bg3-insight-box">
+                <i class="fas fa-eye"></i> <em>{{{insightText}}}</em>
+            </div>
+        {{/if}}
     </div>
 
     <div class="bg3-footer">
+        {{#if hasInspiration}}
+            <div class="bg3-inspiration-row">
+                <input type="checkbox" id="use-inspiration" name="useInspiration">
+                <label for="use-inspiration">✨ Inspiration als Sicherheitsnetz nutzen</label>
+            </div>
+        {{/if}}
+
         <div class="bg3-pc-row">
             {{#if pcImg}}
                 <img src="{{pcImg}}" class="bg3-portrait pc-portrait" title="{{pcName}}">

@@ -21,11 +21,15 @@
     object-fit: cover;
 }
 
-.npc-portrait {
-    width: 70px;
-    height: 70px;
-    margin-right: 20px;
-}
+.npc-portrait { width: 70px; height: 70px; margin-right: 20px; }
+
+.header-info { display: flex; flex-direction: column; }
+.bg3-npc-name { margin: 0; }
+
+.rel-indicator { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #222; margin-top: 5px; box-shadow: 0 0 5px rgba(0,0,0,0.5); }
+.status-friendly { background-color: #2e7d32; box-shadow: 0 0 10px #2e7d32; }
+.status-hostile { background-color: #c62828; box-shadow: 0 0 10px #c62828; }
+.status-neutral { background-color: #757575; }
 
 .bg3-main-text {
     font-size: 1.3rem;
@@ -35,7 +39,28 @@
     color: #fff;
 }
 
-/* Neuer Bereich für den Spieler-Charakter */
+.bg3-insight-box {
+    background: rgba(193, 163, 91, 0.15);
+    border-left: 4px solid #c1a35b;
+    padding: 12px;
+    margin: 15px 0;
+    font-size: 1.1rem;
+    color: #d4cfb9;
+}
+
+.bg3-inspiration-row {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px dashed #c1a35b;
+    padding: 8px 12px;
+    margin-bottom: 15px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #c1a35b;
+    font-weight: bold;
+}
+
 .bg3-pc-row {
     display: flex;
     align-items: flex-start;
@@ -44,69 +69,29 @@
     margin-top: 10px;
 }
 
-.pc-portrait {
-    width: 50px;
-    height: 50px;
-    border-color: #5b8bc1; /* Blau-Silberne Umrandung zur Unterscheidung */
-    margin-right: 15px;
-    flex-shrink: 0;
-}
+.pc-portrait { width: 50px; height: 50px; border-color: #5b8bc1; margin-right: 15px; flex-shrink: 0; }
 
 .bg3-pc-name {
-    display: block;
-    color: #5b8bc1;
-    font-size: 0.9rem;
-    font-style: italic;
-    margin-bottom: 10px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    display: block; color: #5b8bc1; font-size: 0.9rem; font-style: italic;
+    margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px;
 }
 
-.bg3-options-container {
-    flex-grow: 1;
-}
-
-.bg3-options-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
+.bg3-options-container { flex-grow: 1; }
+.bg3-options-list { list-style: none; padding: 0; margin: 0; }
 
 .dialog-option {
-    background: rgba(193, 163, 91, 0.1);
-    margin: 8px 0;
-    padding: 12px;
-    cursor: pointer;
-    border: 1px solid rgba(193, 163, 91, 0.3);
-    border-radius: 6px;
+    background: rgba(193, 163, 91, 0.1); margin: 8px 0; padding: 12px;
+    cursor: pointer; border: 1px solid rgba(193, 163, 91, 0.3); border-radius: 6px;
     transition: all 0.2s ease;
 }
 
 .dialog-option:hover:not(.disabled) {
-    background: rgba(193, 163, 91, 0.4);
-    border-color: #c1a35b;
-    transform: translateX(5px);
+    background: rgba(193, 163, 91, 0.4); border-color: #c1a35b; transform: translateX(5px);
 }
 
-.dialog-option.disabled {
-    opacity: 0.5;
-    cursor: default;
-}
+.dialog-option.disabled { opacity: 0.5; cursor: default; }
+.opt-number { color: #c1a35b; font-weight: bold; margin-right: 15px; }
 
-.opt-number {
-    color: #c1a35b;
-    font-weight: bold;
-    margin-right: 15px;
-}
-
-/* Formatierung für den Foundry Chat */
-.bg3-chat-msg {
-    font-size: 1.1em;
-    padding: 4px 0;
-}
-.bg3-chat-msg.npc-msg {
-    color: #8a6c22; /* Gold/Braun für NPC */
-}
-.bg3-chat-msg.pc-msg {
-    color: #2e5a88; /* Bläulich für PC */
-}
+.bg3-chat-msg { font-size: 1.1em; padding: 4px 0; }
+.bg3-chat-msg.npc-msg { color: #8a6c22; }
+.bg3-chat-msg.pc-msg { color: #2e5a88; }

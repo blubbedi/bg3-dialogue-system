@@ -21,22 +21,27 @@ Hooks.once('ready', async () => {
         await BG3DialogueSystem.checkAndCreateDefaults();
     }
 
-    game.socket.on(`module.${MOD_ID}`, data => {
+    game.socket.on(`module.${MOD_ID}`, async data => {
         if (data.type === "showDialog" && game.user.id === data.receiverId) {
-            new BG3DialogueWindow(data.npcId, data.pcId, data.fullTree, data.startNode).render(true);
+            new BG3DialogueWindow(data.npcId, data.pcId, data.fullTree, data.startNode, false, data.relScore, data.relTags).render(true);
         } 
         else if (data.type === "choiceMade" && game.user.isGM && game.users.activeGM?.isSelf) {
-            BG3DialogueSystem.processChoice(data);
+            await BG3DialogueSystem.processChoice(data);
         } 
         else if (data.type === "updateObserver" && game.user.isGM) {
             const openApp = Object.values(ui.windows).find(app => app instanceof BG3DialogueWindow && app.npc.id === data.npcId && app.isObserver);
             if (openApp) {
                 openApp.currentNodeKey = data.nextNode;
+                openApp.relScore = data.relScore; // Synchronisiere GM Ansicht
+                openApp.relTags = data.relTags;
                 openApp.render(true);
             }
         } 
         else if (data.type === "closeObserver" && game.user.isGM && game.users.activeGM?.isSelf) {
-            BG3DialogueSystem.endConversation(data.npcId);
+            await BG3DialogueSystem.endConversation(data.npcId);
+        }
+        else if (data.type === "updateRelationship" && game.user.isGM && game.users.activeGM?.isSelf) {
+            await BG3DialogueSystem.updateRelationshipJournal(data.npcId, data.mod, data.tag);
         }
     });
 });
@@ -60,12 +65,54 @@ class BG3DialogueSystem {
 
     static async checkAndCreateDefaults() {
         const folderName = game.settings.get(MOD_ID, 'npcFolder');
-        
         let actorFolder = game.folders.find(f => f.name === folderName && f.type === "Actor");
         if (!actorFolder) await Folder.create({ name: folderName, type: "Actor", color: "#c1a35b" });
 
         let journalFolder = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry");
         if (!journalFolder) await Folder.create({ name: "Gespräche", type: "JournalEntry", color: "#c1a35b" });
+        
+        let relFolder = game.folders.find(f => f.name === "Beziehung" && f.folder?.id === journalFolder?.id);
+        if (journalFolder && !relFolder) await Folder.create({ name: "Beziehung", type: "JournalEntry", folder: journalFolder.id, color: "#8b0000" });
+    }
+
+    static async getOrCreateRelationship(npcName) {
+        let parentFolder = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry");
+        let relFolder = game.folders.find(f => f.name === "Beziehung" && f.folder?.id === parentFolder?.id);
+        if (!relFolder) return { score: 0, tags: [], report: null };
+
+        let report = game.journal.find(j => j.name === npcName && j.folder?.id === relFolder.id);
+        if (!report) {
+            report = await JournalEntry.create({
+                name: npcName, folder: relFolder.id,
+                content: `<h3>Status: ${npcName}</h3><p>Stimmung: 0 (Neutral)</p><ul></ul>`
+            });
+            await report.setFlag(MOD_ID, "relationshipScore", 0);
+            await report.setFlag(MOD_ID, "tags", []);
+        }
+        return {
+            score: report.getFlag(MOD_ID, "relationshipScore") || 0,
+            tags: report.getFlag(MOD_ID, "tags") || [],
+            report: report
+        };
+    }
+
+    static async updateRelationshipJournal(npcId, adjustment = 0, tag = null) {
+        const npc = game.actors.get(npcId);
+        const relData = await this.getOrCreateRelationship(npc.name);
+        if (!relData.report) return;
+
+        let newScore = relData.score + adjustment;
+        let newTags = [...relData.tags];
+        if (tag && !newTags.includes(tag)) newTags.push(tag);
+
+        await relData.report.setFlag(MOD_ID, "relationshipScore", newScore);
+        await relData.report.setFlag(MOD_ID, "tags", newTags);
+
+        const status = newScore >= 5 ? "Freundlich" : (newScore <= -5 ? "Feindlich" : "Neutral");
+        await relData.report.update({
+            content: `<h3>Status: ${npc.name}</h3><p>Stimmung: ${newScore} (${status})</p><h4>Ereignisse:</h4><ul>${newTags.map(t => `<li>${t}</li>`).join("")}</ul>`
+        });
+        return { score: newScore, tags: newTags };
     }
 
     static showSelectionDialog() {
@@ -108,11 +155,10 @@ class BG3DialogueSystem {
         try {
             const fullTree = JSON.parse(rawJson);
             const startText = fullTree.startNode.text;
+            const relData = await this.getOrCreateRelationship(npc.name);
 
             this.activeSessions[npcId] = {
-                pcId: pcId,
-                userId: userId,
-                history: [`<b>${npc.name}:</b> ${startText}`]
+                pcId: pcId, userId: userId, history: [`<b>${npc.name}:</b> ${startText}`]
             };
 
             ChatMessage.create({
@@ -122,21 +168,26 @@ class BG3DialogueSystem {
 
             game.socket.emit(`module.${MOD_ID}`, {
                 type: "showDialog", npcId: npcId, pcId: pcId, receiverId: userId,
-                fullTree: fullTree, startNode: "startNode"
+                fullTree: fullTree, startNode: "startNode", relScore: relData.score, relTags: relData.tags
             });
             
-            new BG3DialogueWindow(npcId, pcId, fullTree, "startNode", true).render(true);
+            new BG3DialogueWindow(npcId, pcId, fullTree, "startNode", true, relData.score, relData.tags).render(true);
         } catch (e) {
             console.error(e);
             ui.notifications.error("Die Biografie enthält kein valides JSON.");
         }
     }
 
-    static processChoice(data) {
+    static async processChoice(data) {
         const npc = game.actors.get(data.npcId);
         const pc = data.pcId ? game.actors.get(data.pcId) : null;
         const speakerName = pc ? pc.name : (game.users.get(data.playerId)?.name || "Unbekannt");
         
+        // Update Relationship if tags/mods are present
+        if (data.ship_mod || data.ship_tag) {
+            await this.updateRelationshipJournal(data.npcId, data.ship_mod || 0, data.ship_tag);
+        }
+
         if (this.activeSessions[data.npcId]) {
             this.activeSessions[data.npcId].history.push(`<b>${speakerName}:</b> ${data.text}`);
             if (data.nextNodeText) {
@@ -164,23 +215,21 @@ class BG3DialogueSystem {
             const pc = session.pcId ? game.actors.get(session.pcId) : null;
             
             const date = new Date().toLocaleDateString("de-DE", { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-            const partners = `${npc.name} & ${pc ? pc.name : "Unbekannt"}`;
             const folder = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry");
 
             let permissions = { default: 0 }; 
             if (session.userId) permissions[session.userId] = 2;
 
             await JournalEntry.create({
-                name: `${partners} (${date})`,
+                name: `${npc.name} & ${pc ? pc.name : "Unbekannt"} (${date})`,
                 folder: folder?.id,
                 ownership: permissions,
                 pages: [{
-                    name: "Gesprächsprotokoll",
+                    name: "Protokoll",
                     type: "text",
                     text: { content: session.history.map(line => `<p style="margin-bottom: 5px;">${line}</p>`).join("") }
                 }]
             });
-
             delete this.activeSessions[npcId];
         }
 
@@ -190,51 +239,104 @@ class BG3DialogueSystem {
 }
 
 class BG3DialogueWindow extends Application {
-    constructor(npcId, pcId, fullTree, currentNodeKey, isObserver = false) {
+    constructor(npcId, pcId, fullTree, currentNodeKey, isObserver = false, relScore = 0, relTags = []) {
         super();
         this.npc = game.actors.get(npcId);
         this.pc = pcId ? game.actors.get(pcId) : null;
         this.fullTree = fullTree;
         this.currentNodeKey = currentNodeKey;
         this.isObserver = isObserver;
+        this.relScore = relScore;
+        this.relTags = relTags;
+        this.insightResults = {}; // Speichert, ob Check pro Node gemacht wurde
     }
 
     static get defaultOptions() {
         return foundry.utils.mergeObject(super.defaultOptions, {
             id: "bg3-dialog-ui",
             template: `modules/${MOD_ID}/templates/dialog.html`,
-            width: 700,
-            height: "auto",
-            popOut: true,
-            title: "Gespräch"
+            width: 700, height: "auto", popOut: true, title: "Gespräch"
         });
+    }
+
+    // Führt stille Checks VOR dem Rendern aus
+    async _render(force=false, options={}) {
+        await this._handleReactiveInsight();
+        return super._render(force, options);
+    }
+
+    async _handleReactiveInsight() {
+        if (this.isObserver) return;
+        const node = this.fullTree[this.currentNodeKey];
+        if (node && node.reactive_check && this.insightResults[this.currentNodeKey] === undefined) {
+            const finalDC = node.reactive_check.dc + this._getDCMod();
+            const skillBonus = this.pc ? (this.pc.system.skills[node.reactive_check.skill]?.total || 0) : 0;
+            
+            let roll = await new Roll("1d20").evaluate({async: true});
+            let d20 = roll.total;
+            if (d20 === 1 && this._isHalfling()) {
+                roll = await new Roll("1d20").evaluate({async: true});
+                d20 = roll.total;
+            }
+
+            const success = (d20 + skillBonus) >= finalDC;
+            this.insightResults[this.currentNodeKey] = success;
+
+            if (success && node.reactive_check.ship_tag) {
+                this.relTags.push(node.reactive_check.ship_tag); // Lokales Update
+                game.socket.emit(`module.${MOD_ID}`, { type: "updateRelationship", npcId: this.npc.id, mod: 0, tag: node.reactive_check.ship_tag });
+            }
+        }
+    }
+
+    _getDCMod() {
+        if (this.relScore <= -5) return 5;
+        if (this.relScore < 0) return 2;
+        if (this.relScore >= 5) return -5;
+        if (this.relScore > 0) return -2;
+        return 0;
+    }
+
+    _isHalfling() {
+        if (!this.pc) return false;
+        const raceDetails = this.pc.system.details.race;
+        const raceItem = this.pc.items.find(i => i.type === "race");
+        const raceStr = raceItem ? raceItem.name.toLowerCase() : (typeof raceDetails === 'string' ? raceDetails.toLowerCase() : "");
+        return raceStr.includes("halbling") || raceStr.includes("halfling") || this.pc.items.some(i => i.name.toLowerCase().includes("halfling"));
     }
 
     getData() {
         const node = this.fullTree[this.currentNodeKey];
         
-        // Bonus aus dem Charakterbogen lesen und in den Text injizieren
-        const options = (node && node.options ? node.options : []).map(opt => {
+        let filteredOptions = (node && node.options ? node.options : []).filter(opt => {
+            if (opt.condition_tag && !this.relTags.includes(opt.condition_tag)) return false;
+            return true;
+        });
+
+        const options = filteredOptions.map(opt => {
             let displayHtml = opt.text;
             if (opt.check && this.pc) {
-                const skill = this.pc.system.skills[opt.check];
-                const mod = skill ? skill.total : 0;
+                const mod = this.pc.system.skills[opt.check]?.total || 0;
                 const modStr = mod >= 0 ? `+${mod}` : `${mod}`;
-                // Sucht nach Text in eckigen Klammern und hängt den Bonus an (z.B. [Überzeugen] -> [Überzeugen +5])
                 displayHtml = opt.text.replace(/\[(.*?)\]/, `[$1 ${modStr}]`);
             }
             return { ...opt, displayHtml };
         });
         
+        const statusObj = this.relScore >= 5 ? {class: "friendly", name: "Freundlich"} : 
+                         (this.relScore <= -5 ? {class: "hostile", name: "Feindlich"} : {class: "neutral", name: "Neutral"});
+
         return {
-            npcName: this.npc.name,
-            npcImg: this.npc.img,
-            pcName: this.pc ? this.pc.name : null,
-            pcImg: this.pc ? this.pc.img : null,
+            npcName: this.npc.name, npcImg: this.npc.img,
+            pcName: this.pc ? this.pc.name : null, pcImg: this.pc ? this.pc.img : null,
             text: node ? node.text : "...",
             options: options,
             isEndNode: options.length === 0,
-            isObserver: this.isObserver
+            isObserver: this.isObserver,
+            relationshipStatus: statusObj,
+            showInsight: this.insightResults[this.currentNodeKey] === true,
+            insightText: node?.reactive_check?.success_text,
+            hasInspiration: this.pc ? this.pc.system.attributes.inspiration : false
         };
     }
 
@@ -243,66 +345,69 @@ class BG3DialogueWindow extends Application {
         
         html.find('.dialog-option').click(async ev => {
             if (this.isObserver) return;
-            
             const idx = $(ev.currentTarget).data('index');
             const node = this.fullTree[this.currentNodeKey];
-            const selected = node.options[idx];
+            const availableOptions = node.options.filter(opt => !opt.condition_tag || this.relTags.includes(opt.condition_tag));
+            const selected = availableOptions[idx];
             
             let nextNodeKey = selected.nextNode;
             let chatText = selected.text;
             let rollResultText = "";
 
-            // --- SKILL CHECK LOGIK ---
-            if (selected.check) {
-                if (!this.pc) {
-                    return ui.notifications.warn("Für diese Aktion muss ein Spieler-Charakter (PC) ausgewählt sein!");
+            if (selected.check && this.pc) {
+                const mod = this.pc.system.skills[selected.check]?.total || 0;
+                chatText = selected.text.replace(/\[(.*?)\]/, `[$1 ${mod >= 0 ? '+' : ''}${mod}]`);
+                
+                const finalDC = selected.dc + this._getDCMod();
+                let roll = await new Roll("1d20").evaluate({async: true});
+                let d20 = roll.total;
+                
+                // Halblingsglück
+                if (d20 === 1 && this._isHalfling()) {
+                    ui.notifications.info("🍀 Halblingsglück! Die 1 wird neu gewürfelt.");
+                    roll = await new Roll("1d20").evaluate({async: true});
+                    d20 = roll.total;
                 }
-                
-                const skill = this.pc.system.skills[selected.check];
-                const mod = skill ? skill.total : 0;
-                const modStr = mod >= 0 ? `+${mod}` : `${mod}`;
-                
-                // Formatiert den Text für den Chat sauber
-                chatText = selected.text.replace(/\[(.*?)\]/, `[$1 ${modStr}]`);
 
-                // Würfeln (1d20 + Modifikator)
-                const roll = await new Roll(`1d20 + ${mod}`).evaluate();
-                
-                // 3D Würfel anzeigen, falls das Modul installiert ist
+                let total = d20 + mod;
+
+                // Inspiration (Sicherheitsnetz)
+                const useInspiration = html.find('#use-inspiration').is(':checked');
+                if (total < finalDC && useInspiration && this.pc.system.attributes.inspiration) {
+                    ui.notifications.warn("✨ Inspiration verbraucht! Schicksal wendet sich...");
+                    await this.pc.update({"system.attributes.inspiration": false});
+                    roll = await new Roll("1d20").evaluate({async: true});
+                    d20 = roll.total;
+                    total = d20 + mod;
+                }
+
                 if (game.dice3d) await game.dice3d.showForRoll(roll, game.user, true);
 
-                // Ergebnis prüfen
-                const isSuccess = roll.total >= selected.dc;
+                const isSuccess = total >= finalDC;
                 nextNodeKey = isSuccess ? selected.passNode : selected.failNode;
                 
-                // Text für das Journal/Chat Log vorbereiten
-                const resultStr = isSuccess ? "ERFOLG" : "FEHLSCHLAG";
-                const resultColor = isSuccess ? "#4db8ff" : "#ff4d4d"; // Blau oder Rot
-                rollResultText = `<br><span style="color: ${resultColor}; font-size: 0.85em; font-style: normal;">↳ [Wurf: ${roll.total} vs SG ${selected.dc} ➔ <b>${resultStr}</b>]</span>`;
+                const resultColor = isSuccess ? "#4db8ff" : "#ff4d4d";
+                rollResultText = `<br><span style="color: ${resultColor}; font-size: 0.85em;">↳ [Wurf: ${roll.total} vs SG ${finalDC} (Basis ${selected.dc}) ➔ <b>${isSuccess ? "ERFOLG" : "FEHLSCHLAG"}</b>]</span>`;
 
-                // Echten Wurf in den Chat posten
                 const skillLabel = CONFIG.DND5E.skills[selected.check]?.label || selected.check.toUpperCase();
-                await roll.toMessage({
-                    speaker: ChatMessage.getSpeaker({ actor: this.pc }),
-                    flavor: `Fertigkeitswurf: ${skillLabel} (SG ${selected.dc})`
-                });
+                await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: this.pc }), flavor: `Fertigkeitswurf: ${skillLabel} (SG ${finalDC})` });
             }
 
-            // Senden an den GM
+            // Lokales Update der Beziehung (für direkte Render-Feedback)
+            if (selected.ship_mod) this.relScore += selected.ship_mod;
+            if (selected.ship_tag) this.relTags.push(selected.ship_tag);
+
             game.socket.emit(`module.${MOD_ID}`, {
-                type: "choiceMade",
-                npcId: this.npc.id,
-                pcId: this.pc ? this.pc.id : null,
-                playerId: game.user.id,
+                type: "choiceMade", npcId: this.npc.id, pcId: this.pc ? this.pc.id : null, playerId: game.user.id,
                 text: chatText + rollResultText,
-                nextNodeText: (nextNodeKey && this.fullTree[nextNodeKey]) ? this.fullTree[nextNodeKey].text : null
+                nextNodeText: (nextNodeKey && this.fullTree[nextNodeKey]) ? this.fullTree[nextNodeKey].text : null,
+                ship_mod: selected.ship_mod, ship_tag: selected.ship_tag
             });
 
-            // Fenster updaten oder schließen
             if (nextNodeKey && this.fullTree[nextNodeKey]) {
                 this.currentNodeKey = nextNodeKey;
                 this.render(true);
-                game.socket.emit(`module.${MOD_ID}`, { type: "updateObserver", npcId: this.npc.id, nextNode: nextNodeKey });
+                game.socket.emit(`module.${MOD_ID}`, { type: "updateObserver", npcId: this.npc.id, nextNode: nextNodeKey, relScore: this.relScore, relTags: this.relTags });
             } else {
                 game.socket.emit(`module.${MOD_ID}`, { type: "closeObserver", npcId: this.npc.id });
                 this.close();
@@ -311,14 +416,7 @@ class BG3DialogueWindow extends Application {
 
         html.find('.dialog-close-btn').click(ev => {
             if (this.isObserver) return;
-            game.socket.emit(`module.${MOD_ID}`, {
-                type: "choiceMade",
-                npcId: this.npc.id,
-                pcId: this.pc ? this.pc.id : null,
-                playerId: game.user.id,
-                text: "<i>*Verlässt das Gespräch*</i>",
-                nextNodeText: null
-            });
+            game.socket.emit(`module.${MOD_ID}`, { type: "choiceMade", npcId: this.npc.id, pcId: this.pc?.id, playerId: game.user.id, text: "<i>*Verlässt das Gespräch*</i>", nextNodeText: null });
             game.socket.emit(`module.${MOD_ID}`, { type: "closeObserver", npcId: this.npc.id });
             this.close();
         });
