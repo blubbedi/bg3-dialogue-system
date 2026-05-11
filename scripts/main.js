@@ -2,17 +2,13 @@ const MOD_ID = 'bg3-dialogue-system';
 
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
-/**
- * Kern-Weiche: Delegiert Schreibvorgänge an den GM, 
- * da Spieler keine Berechtigung für Journale haben.
- */
+// Weiche für GM-Events (Permission-Safe für Spieler)
 function dispatchSystemEvent(data) {
     if (game.user.isGM) {
         if (data.type === "choiceMade") BG3DialogueSystem.processChoice(data);
         else if (data.type === "closeObserver") BG3DialogueSystem.endConversation(data.npcId);
         else if (data.type === "updateRelationship") BG3DialogueSystem.updateRelationshipJournal(data.npcId, data.mod, data.tag);
     } else {
-        // Spieler sendet nur die Anfrage an den GM
         game.socket.emit(`module.${MOD_ID}`, data);
     }
 }
@@ -150,10 +146,9 @@ class BG3DialogueSystem {
         const session = this.activeSessions[data.npcId];
         if (!session) return;
         session.history.push(`<b>${data.speaker}:</b> ${data.text}`);
-        
         if (data.systemLog) session.history.push(`<span style="color: #8b0000; font-size: 0.9em;"><i>${data.systemLog}</i></span>`);
         if (data.nextNodeText) session.history.push(`<b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}`);
-        
+
         ChatMessage.create({ speaker: { alias: data.speaker }, content: `<div class="bg3-chat-msg pc-msg"><b>${data.speaker}:</b> ${data.text}</div>` });
         if (data.nextNodeText) ChatMessage.create({ speaker: ChatMessage.getSpeaker({ actor: game.actors.get(data.npcId) }), content: `<div class="bg3-chat-msg npc-msg"><b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}</div>` });
     }
@@ -186,7 +181,7 @@ class BG3DialogueWindow extends Application {
         this.relScore = relScore;
         this.relTags = relTags;
         this.insightResults = {};
-        this.processedNodes = new Set(); // Verhindert doppelte Stimmungsabzüge bei Re-Render!
+        this.processedNodes = new Set(); // Verhindert doppelte Ausführung bei UI-Rerenders
     }
 
     static get defaultOptions() {
@@ -198,17 +193,18 @@ class BG3DialogueWindow extends Application {
     async render(force, options) {
         if (!this.isObserver && force) {
             const node = this.fullTree[this.currentNodeKey];
-            // Führe Knoten-Effekte nur EINMAL aus
             if (node && !this.processedNodes.has(this.currentNodeKey)) {
                 this.processedNodes.add(this.currentNodeKey);
                 
+                // UI lokal sofort updaten
+                if (node.ship_mod) this.relScore += node.ship_mod;
+                if (node.ship_tag && !this.relTags.includes(node.ship_tag)) this.relTags.push(node.ship_tag);
+
+                if (node.ship_mod > 0) ui.notifications.info(`Die Stimmung von ${this.npc.name} bessert sich.`);
+                else if (node.ship_mod < 0) ui.notifications.warn(`Die Stimmung von ${this.npc.name} verschlechtert sich!`);
+
+                // Datenbank-Schreibvorgang an GM delegieren
                 if (node.ship_mod || node.ship_tag) {
-                    this.relScore += (node.ship_mod || 0);
-                    if (node.ship_tag && !this.relTags.includes(node.ship_tag)) this.relTags.push(node.ship_tag);
-
-                    if (node.ship_mod > 0) ui.notifications.info(`Die Stimmung von ${this.npc.name} bessert sich.`);
-                    else if (node.ship_mod < 0) ui.notifications.warn(`Die Stimmung von ${this.npc.name} verschlechtert sich!`);
-
                     dispatchSystemEvent({ type: "updateRelationship", npcId: this.npc.id, mod: node.ship_mod || 0, tag: node.ship_tag });
                 }
                 await this._handleReactiveInsight(node);
@@ -220,15 +216,17 @@ class BG3DialogueWindow extends Application {
     async _handleReactiveInsight(node) {
         if (node.reactive_check && this.insightResults[this.currentNodeKey] === undefined) {
             let roll = await new Roll("1d20").evaluate();
-            
-            // Halblingsglück für passive Checks
-            if (roll.total === 1 && this._isHalfling()) {
+            let d20 = roll.total;
+
+            if (d20 === 1 && this._isHalfling()) {
                 roll = await new Roll("1d20").evaluate();
+                d20 = roll.total;
             }
 
             const bonus = this.pc ? (this.pc.system.skills[node.reactive_check.skill]?.total || 0) : 0;
-            const success = (roll.total + bonus) >= (node.reactive_check.dc + this._getDCMod());
+            const success = (d20 + bonus) >= (node.reactive_check.dc + this._getDCMod());
             this.insightResults[this.currentNodeKey] = success;
+            
             if (success && node.reactive_check.ship_tag) {
                 dispatchSystemEvent({ type: "updateRelationship", npcId: this.npc.id, mod: 0, tag: node.reactive_check.ship_tag });
                 if (!this.relTags.includes(node.reactive_check.ship_tag)) this.relTags.push(node.reactive_check.ship_tag);
@@ -274,7 +272,7 @@ class BG3DialogueWindow extends Application {
                 let roll = await new Roll("1d20").evaluate();
                 let d20 = roll.total;
                 
-                // 1. Halblingsglück
+                // Halblingsglück
                 if (d20 === 1 && this._isHalfling()) {
                     ui.notifications.info("🍀 Halblingsglück! Die 1 wird neu gewürfelt.");
                     roll = await new Roll("1d20").evaluate();
@@ -285,7 +283,7 @@ class BG3DialogueWindow extends Application {
                 let total = d20 + bonus;
                 const finalDC = opt.dc + this._getDCMod();
 
-                // 2. Inspiration (Sicherheitsnetz)
+                // Inspiration
                 const useInspiration = html.find('#use-inspiration').is(':checked');
                 if (total < finalDC && useInspiration && this.pc.system.attributes.inspiration) {
                     ui.notifications.warn("✨ Inspiration verbraucht! Schicksal wendet sich...");
@@ -295,18 +293,20 @@ class BG3DialogueWindow extends Application {
                     total = d20 + bonus;
                 }
 
-                // 3D Würfel Animation (falls Modul aktiv)
                 if (game.dice3d) await game.dice3d.showForRoll(roll, game.user, true);
 
                 const success = total >= finalDC;
                 nextKey = success ? opt.passNode : opt.failNode;
-                resTxt = ` [Wurf: ${d20} vs SG ${finalDC} ➔ ${success ? 'ERFOLG' : 'FEHLSCHLAG'}]`;
                 
+                // FIX: Gesamtergebnis anzeigen, damit die Mathe stimmt!
+                const resultColor = success ? "#4db8ff" : "#ff4d4d";
+                resTxt = `<br><span style="color: ${resultColor}; font-size: 0.85em;">↳ [Wurf: ${total} (W20: ${d20}) vs SG ${finalDC} ➔ <b>${success ? 'ERFOLG' : 'FEHLSCHLAG'}</b>]</span>`;
+
                 const skillLabel = CONFIG.DND5E.skills[opt.check]?.label || opt.check.toUpperCase();
                 await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: this.pc }), flavor: `Fertigkeitswurf: ${skillLabel} (SG ${finalDC})` });
             }
 
-            // Metadaten für das Logbuch des GMs generieren
+            // GM-Logbuch Text zusammenbauen
             const nextNode = this.fullTree[nextKey];
             let systemLog = "";
             if (nextNode) {
@@ -314,23 +314,12 @@ class BG3DialogueWindow extends Application {
                     if (nextNode.ship_mod > 0) systemLog += `[Stimmung verbessert: +${nextNode.ship_mod}] `;
                     else if (nextNode.ship_mod < 0) systemLog += `[Stimmung verschlechtert: ${nextNode.ship_mod}] `;
                 }
-                if (nextNode.ship_tag) systemLog += `[Neues Ereignis: "${nextNode.ship_tag}"] `;
+                if (nextNode.ship_tag) systemLog += `[Neues Ereignis: "${nextNode.ship_tag}"]`;
             }
 
-            dispatchSystemEvent({ 
-                type: "choiceMade", npcId: this.npc.id, speaker, 
-                text: opt.text + resTxt, 
-                systemLog: systemLog, 
-                nextNodeText: nextNode?.text 
-            });
-
-            if (nextKey) { 
-                this.currentNodeKey = nextKey; 
-                this.render(true); 
-            } else { 
-                dispatchSystemEvent({ type: "closeObserver", npcId: this.npc.id }); 
-                this.close(); 
-            }
+            dispatchSystemEvent({ type: "choiceMade", npcId: this.npc.id, speaker, text: opt.text + resTxt, systemLog: systemLog, nextNodeText: nextNode?.text });
+            if (nextKey) { this.currentNodeKey = nextKey; this.render(true); } 
+            else { dispatchSystemEvent({ type: "closeObserver", npcId: this.npc.id }); this.close(); }
         });
     }
 }
