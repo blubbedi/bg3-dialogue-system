@@ -206,9 +206,7 @@ class BG3DialogueWindow extends Application {
     }
 
     async close(options) {
-        if (!this.isObserver) {
-            dispatchSystemEvent({ type: "closeObserver", npcId: this.npc.id });
-        }
+        if (!this.isObserver) dispatchSystemEvent({ type: "closeObserver", npcId: this.npc.id });
         return super.close(options);
     }
 
@@ -298,29 +296,23 @@ class BG3DialogueWindow extends Application {
                     d20 = roll.total;
                 }
 
-                if (game.dice3d) await game.dice3d.showForRoll(roll, game.user, true);
-
                 const bonus = this.pc.system.skills[opt.check].total;
                 let total = d20 + bonus;
                 const finalDC = opt.dc + this._getDCMod();
+                const skillLabel = CONFIG.DND5E.skills[opt.check]?.label || opt.check.toUpperCase();
 
-                // NEU: Interaktive Inspirations-Abfrage bei Fehlschlag!
+                // 1. Wurf sofort in den Chat posten (Löst Dice3D Animation automatisch aus)
+                await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: this.pc }), flavor: `Fertigkeitswurf: ${skillLabel} (SG ${finalDC})` });
+
+                // 2. Interaktives Inspirations-Pop-Up bei Fehlschlag!
                 if (total < finalDC && this.pc.system.attributes.inspiration) {
                     const useInsp = await new Promise(resolve => {
                         new Dialog({
                             title: "✨ Inspiration einsetzen?",
-                            content: `<p style="text-align: center; margin-bottom: 15px;">Dein Wurf <b>(${total})</b> war ein <b>Fehlschlag</b> (SG ${finalDC}).<br>Du hast einen Inspirationspunkt! Möchtest du ihn einsetzen, um neu zu würfeln?</p>`,
+                            content: `<p style="text-align: center; margin-bottom: 15px;">Dein Wurf <b>(${total})</b> war ein <b>Fehlschlag</b> (SG ${finalDC}).<br>Möchtest du einen Inspirationspunkt nutzen, um das Schicksal zu wenden?</p>`,
                             buttons: {
-                                yes: {
-                                    icon: '<i class="fas fa-dice"></i>',
-                                    label: "Neu würfeln",
-                                    callback: () => resolve(true)
-                                },
-                                no: {
-                                    icon: '<i class="fas fa-times"></i>',
-                                    label: "Akzeptieren",
-                                    callback: () => resolve(false)
-                                }
+                                yes: { icon: '<i class="fas fa-dice"></i>', label: "Neu würfeln", callback: () => resolve(true) },
+                                no: { icon: '<i class="fas fa-times"></i>', label: "Akzeptieren", callback: () => resolve(false) }
                             },
                             default: "yes",
                             close: () => resolve(false)
@@ -328,22 +320,21 @@ class BG3DialogueWindow extends Application {
                     });
 
                     if (useInsp) {
-                        ui.notifications.warn("✨ Inspiration verbraucht! Schicksal wendet sich...");
+                        ui.notifications.warn("✨ Inspiration verbraucht!");
                         await this.pc.update({"system.attributes.inspiration": false});
                         
-                        // Der Reroll!
                         roll = await new Roll("1d20").evaluate();
                         d20 = roll.total;
                         
-                        // Halblingsglück auch beim Reroll triggern
                         if (d20 === 1 && this._isHalfling()) {
-                            ui.notifications.info("🍀 Halblingsglück! Die 1 wird neu gewürfelt.");
+                            ui.notifications.info("🍀 Halblingsglück!");
                             roll = await new Roll("1d20").evaluate();
                             d20 = roll.total;
                         }
                         
-                        if (game.dice3d) await game.dice3d.showForRoll(roll, game.user, true);
                         total = d20 + bonus;
+                        // Reroll in den Chat posten (Löst zweiten Dice3D Wurf aus)
+                        await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: this.pc }), flavor: `✨ Inspiration: ${skillLabel} (SG ${finalDC})` });
                     }
                 }
 
@@ -352,9 +343,6 @@ class BG3DialogueWindow extends Application {
                 
                 const resultColor = success ? "#4db8ff" : "#ff4d4d";
                 resTxt = `<br><span style="color: ${resultColor}; font-size: 0.85em;">↳ [Wurf: ${total} (W20: ${d20}) vs SG ${finalDC} ➔ <b>${success ? 'ERFOLG' : 'FEHLSCHLAG'}</b>]</span>`;
-
-                const skillLabel = CONFIG.DND5E.skills[opt.check]?.label || opt.check.toUpperCase();
-                await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: this.pc }), flavor: `Fertigkeitswurf: ${skillLabel} (SG ${finalDC})` });
             }
 
             const nextNode = this.fullTree[nextKey];
