@@ -109,9 +109,9 @@ class BG3DialogueSystem {
 
     static async updateRelationshipJournal(npcId, adjustment = 0, tag = null) {
         const npc = game.actors.get(npcId);
-        if (!npc) return;
+        if (!npc) return null;
         const relData = await this.getOrCreateRelationship(npc.name);
-        if (!relData.report) return;
+        if (!relData.report) return null;
 
         let newScore = relData.score + adjustment;
         let newTags = [...relData.tags];
@@ -139,7 +139,6 @@ class BG3DialogueSystem {
 
         let npcOptions = npcs.map(n => `<option value="${n.id}">${n.name}</option>`).join("");
         
-        // Fügt den GM selbst hinzu, um Dialoge solo testen zu können
         let playerOptions = `<option value="${game.user.id}">GM / Test-Modus</option>`;
         playerOptions += players.map(p => `<option value="${p.id}">${p.name} (${p.character?.name || "Kein Charakter"})</option>`).join("");
 
@@ -181,10 +180,8 @@ class BG3DialogueSystem {
             });
 
             if (userId === game.user.id) {
-                // GM testet selbst
                 new BG3DialogueWindow(npcId, pcId, fullTree, "startNode", false, relData.score, relData.tags).render(true);
             } else {
-                // Sende an Spieler
                 game.socket.emit(`module.${MOD_ID}`, {
                     type: "showDialog", npcId: npcId, pcId: pcId, receiverId: userId,
                     fullTree: fullTree, startNode: "startNode", relScore: relData.score, relTags: relData.tags
@@ -203,12 +200,27 @@ class BG3DialogueSystem {
         const pc = data.pcId ? game.actors.get(data.pcId) : null;
         const speakerName = pc ? pc.name : (game.users.get(data.playerId)?.name || "Unbekannt");
         
+        let systemLog = ""; // Sammelt die Metadaten für das Protokoll
+
         if (data.ship_mod || data.ship_tag) {
-            await this.updateRelationshipJournal(data.npcId, data.ship_mod || 0, data.ship_tag);
+            const relUpdate = await this.updateRelationshipJournal(data.npcId, data.ship_mod || 0, data.ship_tag);
+            
+            // Text für das Logbuch generieren
+            if (relUpdate) {
+                if (data.ship_mod > 0) systemLog += `[Stimmung verbessert: +${data.ship_mod} ➔ Neu: ${relUpdate.score}] `;
+                else if (data.ship_mod < 0) systemLog += `[Stimmung verschlechtert: ${data.ship_mod} ➔ Neu: ${relUpdate.score}] `;
+                
+                if (data.ship_tag) systemLog += `[Neues Ereignis gemerkt: "${data.ship_tag}"]`;
+            }
         }
 
         if (this.activeSessions[data.npcId]) {
             this.activeSessions[data.npcId].history.push(`<b>${speakerName}:</b> ${data.text}`);
+            
+            if (systemLog !== "") {
+                this.activeSessions[data.npcId].history.push(`<span style="color: #8b0000; font-size: 0.9em;"><i>${systemLog}</i></span>`);
+            }
+            
             if (data.nextNodeText) {
                 this.activeSessions[data.npcId].history.push(`<b>${npc.name}:</b> ${data.nextNodeText}`);
             }
@@ -294,10 +306,11 @@ class BG3DialogueWindow extends Application {
             const finalDC = node.reactive_check.dc + this._getDCMod();
             const skillBonus = this.pc ? (this.pc.system.skills[node.reactive_check.skill]?.total || 0) : 0;
             
-            let roll = await new Roll("1d20").evaluate({async: true});
+            // Gefixt für V12: asynchrones Roll#evaluate ohne obsolete Parameter
+            let roll = await new Roll("1d20").evaluate();
             let d20 = roll.total;
             if (d20 === 1 && this._isHalfling()) {
-                roll = await new Roll("1d20").evaluate({async: true});
+                roll = await new Roll("1d20").evaluate();
                 d20 = roll.total;
             }
 
@@ -381,12 +394,14 @@ class BG3DialogueWindow extends Application {
                 chatText = selected.text.replace(/\[(.*?)\]/, `[$1 ${mod >= 0 ? '+' : ''}${mod}]`);
                 
                 const finalDC = selected.dc + this._getDCMod();
-                let roll = await new Roll("1d20").evaluate({async: true});
+                
+                // Gefixt für V12
+                let roll = await new Roll("1d20").evaluate();
                 let d20 = roll.total;
                 
                 if (d20 === 1 && this._isHalfling()) {
                     ui.notifications.info("🍀 Halblingsglück! Die 1 wird neu gewürfelt.");
-                    roll = await new Roll("1d20").evaluate({async: true});
+                    roll = await new Roll("1d20").evaluate();
                     d20 = roll.total;
                 }
 
@@ -396,7 +411,7 @@ class BG3DialogueWindow extends Application {
                 if (total < finalDC && useInspiration && this.pc.system.attributes.inspiration) {
                     ui.notifications.warn("✨ Inspiration verbraucht! Schicksal wendet sich...");
                     await this.pc.update({"system.attributes.inspiration": false});
-                    roll = await new Roll("1d20").evaluate({async: true});
+                    roll = await new Roll("1d20").evaluate();
                     d20 = roll.total;
                     total = d20 + mod;
                 }
