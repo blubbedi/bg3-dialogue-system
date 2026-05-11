@@ -2,6 +2,17 @@ const MOD_ID = 'bg3-dialogue-system';
 
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
+// Diese Weiche leitet Befehle ans Netzwerk (Spieler) oder führt sie direkt aus (GM-Test)
+function dispatchSystemEvent(data) {
+    if (game.user.isGM) {
+        if (data.type === "choiceMade") BG3DialogueSystem.processChoice(data);
+        else if (data.type === "closeObserver") BG3DialogueSystem.endConversation(data.npcId);
+        else if (data.type === "updateRelationship") BG3DialogueSystem.updateRelationshipJournal(data.npcId, data.mod, data.tag);
+    } else {
+        game.socket.emit(`module.${MOD_ID}`, data);
+    }
+}
+
 Hooks.once('init', () => {
     game.settings.register(MOD_ID, 'npcFolder', {
         name: "NPC-Ordner Name",
@@ -32,7 +43,7 @@ Hooks.once('ready', async () => {
             const openApp = Object.values(ui.windows).find(app => app instanceof BG3DialogueWindow && app.npc.id === data.npcId && app.isObserver);
             if (openApp) {
                 openApp.currentNodeKey = data.nextNode;
-                openApp.relScore = data.relScore; // Synchronisiere GM Ansicht
+                openApp.relScore = data.relScore;
                 openApp.relTags = data.relTags;
                 openApp.render(true);
             }
@@ -98,6 +109,7 @@ class BG3DialogueSystem {
 
     static async updateRelationshipJournal(npcId, adjustment = 0, tag = null) {
         const npc = game.actors.get(npcId);
+        if (!npc) return;
         const relData = await this.getOrCreateRelationship(npc.name);
         if (!relData.report) return;
 
@@ -124,10 +136,12 @@ class BG3DialogueSystem {
         const players = game.users.filter(u => u.active && !u.isGM);
 
         if (npcs.length === 0) return ui.notifications.warn("Keine NPCs im BG3-Ordner.");
-        if (players.length === 0) return ui.notifications.warn("Keine aktiven Spieler online.");
 
         let npcOptions = npcs.map(n => `<option value="${n.id}">${n.name}</option>`).join("");
-        let playerOptions = players.map(p => `<option value="${p.id}">${p.name} (${p.character?.name || "Kein Charakter"})</option>`).join("");
+        
+        // Fügt den GM selbst hinzu, um Dialoge solo testen zu können
+        let playerOptions = `<option value="${game.user.id}">GM / Test-Modus</option>`;
+        playerOptions += players.map(p => `<option value="${p.id}">${p.name} (${p.character?.name || "Kein Charakter"})</option>`).join("");
 
         new Dialog({
             title: "BG3 Konfigurator",
@@ -166,12 +180,18 @@ class BG3DialogueSystem {
                 content: `<div class="bg3-chat-msg npc-msg"><b>${npc.name}:</b> ${startText}</div>`
             });
 
-            game.socket.emit(`module.${MOD_ID}`, {
-                type: "showDialog", npcId: npcId, pcId: pcId, receiverId: userId,
-                fullTree: fullTree, startNode: "startNode", relScore: relData.score, relTags: relData.tags
-            });
+            if (userId === game.user.id) {
+                // GM testet selbst
+                new BG3DialogueWindow(npcId, pcId, fullTree, "startNode", false, relData.score, relData.tags).render(true);
+            } else {
+                // Sende an Spieler
+                game.socket.emit(`module.${MOD_ID}`, {
+                    type: "showDialog", npcId: npcId, pcId: pcId, receiverId: userId,
+                    fullTree: fullTree, startNode: "startNode", relScore: relData.score, relTags: relData.tags
+                });
+                new BG3DialogueWindow(npcId, pcId, fullTree, "startNode", true, relData.score, relData.tags).render(true);
+            }
             
-            new BG3DialogueWindow(npcId, pcId, fullTree, "startNode", true, relData.score, relData.tags).render(true);
         } catch (e) {
             console.error(e);
             ui.notifications.error("Die Biografie enthält kein valides JSON.");
@@ -183,7 +203,6 @@ class BG3DialogueSystem {
         const pc = data.pcId ? game.actors.get(data.pcId) : null;
         const speakerName = pc ? pc.name : (game.users.get(data.playerId)?.name || "Unbekannt");
         
-        // Update Relationship if tags/mods are present
         if (data.ship_mod || data.ship_tag) {
             await this.updateRelationshipJournal(data.npcId, data.ship_mod || 0, data.ship_tag);
         }
@@ -213,16 +232,20 @@ class BG3DialogueSystem {
         if (session) {
             const npc = game.actors.get(npcId);
             const pc = session.pcId ? game.actors.get(session.pcId) : null;
-            
             const date = new Date().toLocaleDateString("de-DE", { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-            const folder = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry");
+            
+            let parentFolder = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry");
+            let logsFolder = game.folders.find(f => f.name === "Logs" && f.folder?.id === parentFolder?.id);
+            if (parentFolder && !logsFolder) {
+                logsFolder = await Folder.create({ name: "Logs", type: "JournalEntry", folder: parentFolder.id, color: "#4db8ff" });
+            }
 
             let permissions = { default: 0 }; 
             if (session.userId) permissions[session.userId] = 2;
 
             await JournalEntry.create({
                 name: `${npc.name} & ${pc ? pc.name : "Unbekannt"} (${date})`,
-                folder: folder?.id,
+                folder: logsFolder?.id || parentFolder?.id,
                 ownership: permissions,
                 pages: [{
                     name: "Protokoll",
@@ -248,7 +271,7 @@ class BG3DialogueWindow extends Application {
         this.isObserver = isObserver;
         this.relScore = relScore;
         this.relTags = relTags;
-        this.insightResults = {}; // Speichert, ob Check pro Node gemacht wurde
+        this.insightResults = {};
     }
 
     static get defaultOptions() {
@@ -259,7 +282,6 @@ class BG3DialogueWindow extends Application {
         });
     }
 
-    // Führt stille Checks VOR dem Rendern aus
     async _render(force=false, options={}) {
         await this._handleReactiveInsight();
         return super._render(force, options);
@@ -283,8 +305,8 @@ class BG3DialogueWindow extends Application {
             this.insightResults[this.currentNodeKey] = success;
 
             if (success && node.reactive_check.ship_tag) {
-                this.relTags.push(node.reactive_check.ship_tag); // Lokales Update
-                game.socket.emit(`module.${MOD_ID}`, { type: "updateRelationship", npcId: this.npc.id, mod: 0, tag: node.reactive_check.ship_tag });
+                this.relTags.push(node.reactive_check.ship_tag);
+                dispatchSystemEvent({ type: "updateRelationship", npcId: this.npc.id, mod: 0, tag: node.reactive_check.ship_tag });
             }
         }
     }
@@ -362,7 +384,6 @@ class BG3DialogueWindow extends Application {
                 let roll = await new Roll("1d20").evaluate({async: true});
                 let d20 = roll.total;
                 
-                // Halblingsglück
                 if (d20 === 1 && this._isHalfling()) {
                     ui.notifications.info("🍀 Halblingsglück! Die 1 wird neu gewürfelt.");
                     roll = await new Roll("1d20").evaluate({async: true});
@@ -370,9 +391,8 @@ class BG3DialogueWindow extends Application {
                 }
 
                 let total = d20 + mod;
-
-                // Inspiration (Sicherheitsnetz)
                 const useInspiration = html.find('#use-inspiration').is(':checked');
+                
                 if (total < finalDC && useInspiration && this.pc.system.attributes.inspiration) {
                     ui.notifications.warn("✨ Inspiration verbraucht! Schicksal wendet sich...");
                     await this.pc.update({"system.attributes.inspiration": false});
@@ -393,11 +413,20 @@ class BG3DialogueWindow extends Application {
                 await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: this.pc }), flavor: `Fertigkeitswurf: ${skillLabel} (SG ${finalDC})` });
             }
 
-            // Lokales Update der Beziehung (für direkte Render-Feedback)
-            if (selected.ship_mod) this.relScore += selected.ship_mod;
-            if (selected.ship_tag) this.relTags.push(selected.ship_tag);
+            // Live-Feedback für Stimmungsänderung
+            if (selected.ship_mod) {
+                this.relScore += selected.ship_mod;
+                if (selected.ship_mod > 0) {
+                    ui.notifications.info(`Die Stimmung von ${this.npc.name} bessert sich.`);
+                } else if (selected.ship_mod < 0) {
+                    ui.notifications.warn(`Die Stimmung von ${this.npc.name} verschlechtert sich!`);
+                }
+            }
+            if (selected.ship_tag) {
+                this.relTags.push(selected.ship_tag);
+            }
 
-            game.socket.emit(`module.${MOD_ID}`, {
+            dispatchSystemEvent({
                 type: "choiceMade", npcId: this.npc.id, pcId: this.pc ? this.pc.id : null, playerId: game.user.id,
                 text: chatText + rollResultText,
                 nextNodeText: (nextNodeKey && this.fullTree[nextNodeKey]) ? this.fullTree[nextNodeKey].text : null,
@@ -407,17 +436,17 @@ class BG3DialogueWindow extends Application {
             if (nextNodeKey && this.fullTree[nextNodeKey]) {
                 this.currentNodeKey = nextNodeKey;
                 this.render(true);
-                game.socket.emit(`module.${MOD_ID}`, { type: "updateObserver", npcId: this.npc.id, nextNode: nextNodeKey, relScore: this.relScore, relTags: this.relTags });
+                if (!game.user.isGM) game.socket.emit(`module.${MOD_ID}`, { type: "updateObserver", npcId: this.npc.id, nextNode: nextNodeKey, relScore: this.relScore, relTags: this.relTags });
             } else {
-                game.socket.emit(`module.${MOD_ID}`, { type: "closeObserver", npcId: this.npc.id });
+                dispatchSystemEvent({ type: "closeObserver", npcId: this.npc.id });
                 this.close();
             }
         });
 
         html.find('.dialog-close-btn').click(ev => {
             if (this.isObserver) return;
-            game.socket.emit(`module.${MOD_ID}`, { type: "choiceMade", npcId: this.npc.id, pcId: this.pc?.id, playerId: game.user.id, text: "<i>*Verlässt das Gespräch*</i>", nextNodeText: null });
-            game.socket.emit(`module.${MOD_ID}`, { type: "closeObserver", npcId: this.npc.id });
+            dispatchSystemEvent({ type: "choiceMade", npcId: this.npc.id, pcId: this.pc?.id, playerId: game.user.id, text: "<i>*Verlässt das Gespräch*</i>", nextNodeText: null });
+            dispatchSystemEvent({ type: "closeObserver", npcId: this.npc.id });
             this.close();
         });
     }
