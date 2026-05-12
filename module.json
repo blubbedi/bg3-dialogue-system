@@ -2,7 +2,7 @@
   "id": "bg3-dialogue-system",
   "title": "BG3 Dialogue System",
   "description": "Simuliert BG3-ähnliche Gespräche mit Beziehungs-Tracking, Insight-Checks und Reroll-Mechaniken.",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "compatibility": {
     "minimum": "11",
     "verified": "12"

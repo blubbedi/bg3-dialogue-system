@@ -126,9 +126,9 @@ class BG3DialogueSystem {
         const pc = user?.character;
         const pcId = pc ? pc.id : null;
         
-        const tempDiv = document.createElement("div");
-        tempDiv.innerHTML = npc.system.details.biography.value || "";
-        const rawJson = (tempDiv.textContent || tempDiv.innerText || "").trim();
+        // FIX: Sicheres Auslesen ohne HTML zu zerstören
+        let rawContent = npc.system.details.biography.value || "";
+        const rawJson = rawContent.replace(/^(<p>|<div>)+/i, '').replace(/(<\/p>|<\/div>)+$/i, '').trim();
         
         try {
             const fullTree = JSON.parse(rawJson);
@@ -141,7 +141,7 @@ class BG3DialogueSystem {
                 game.socket.emit(`module.${MOD_ID}`, { type: "showDialog", npcId, pcId, receiverId: userId, fullTree, startNode: "startNode", relScore: relData.score, relTags: relData.tags });
                 new BG3DialogueWindow(npcId, pcId, fullTree, "startNode", true, relData.score, relData.tags).render(true);
             }
-        } catch (e) { ui.notifications.error("JSON fehlerhaft."); }
+        } catch (e) { ui.notifications.error("JSON fehlerhaft. Überprüfe die NSC-Biografie."); }
     }
 
     static async processChoice(data) {
@@ -197,6 +197,9 @@ class BG3DialogueSystem {
         const session = this.activeSessions[npcId];
         if (!session) return;
         
+        // FIX: Sofort löschen um doppelte Logbücher (Race Condition) zu vermeiden
+        delete this.activeSessions[npcId];
+        
         const logTitle = `${game.actors.get(npcId).name} & ${session.pcName}`;
         let logsFolder = game.folders.find(f => f.name === "Logs");
         let logEntry = game.journal.find(j => j.name === logTitle && j.folder?.id === logsFolder?.id);
@@ -222,7 +225,6 @@ class BG3DialogueSystem {
                 pages: [{ name: "Protokoll", type: "text", text: { content: newContent } }] 
             });
         }
-        delete this.activeSessions[npcId];
     }
 }
 
@@ -316,7 +318,7 @@ class BG3DialogueWindow extends Application {
             npcName: this.npc.name, npcImg: this.npc.img, pcImg: this.pc?.img, pcName: this.pc?.name, text: node?.text, options: opts, 
             relationshipStatus: { class: this.relScore >= 5 ? "friendly" : (this.relScore <= -5 ? "hostile" : "neutral") },
             showInsight: this.insightResults[this.currentNodeKey], insightText: node?.reactive_check?.success_text,
-            isEndNode: opts.length === 0  // HIER IST DER FIX, der den Verlassen-Knopf bei leeren Knoten einblendet!
+            isEndNode: opts.length === 0
         };
     }
 
@@ -402,6 +404,10 @@ class BG3DialogueWindow extends Application {
             }
 
             dispatchSystemEvent({ type: "choiceMade", npcId: this.npc.id, speaker, text: opt.text + resTxt, systemLog: systemLog, nextNodeText: nextNode?.text });
+            
+            // FIX: GM-Fenster mit dem Spieler synchron halten
+            dispatchSystemEvent({ type: "updateObserver", npcId: this.npc.id, nextNode: nextKey, relScore: this.relScore, relTags: this.relTags });
+
             if (nextKey) { this.currentNodeKey = nextKey; this.render(true); } 
             else { this.close(); } 
         });
