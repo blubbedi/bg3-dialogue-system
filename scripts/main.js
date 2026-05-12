@@ -7,6 +7,7 @@ function dispatchSystemEvent(data) {
         if (data.type === "choiceMade") BG3DialogueSystem.processChoice(data);
         else if (data.type === "closeObserver") BG3DialogueSystem.endConversation(data.npcId);
         else if (data.type === "updateRelationship") BG3DialogueSystem.updateRelationshipJournal(data.npcId, data.mod, data.tag);
+        else if (data.type === "startCombat") BG3DialogueSystem.startCombat(data.npcId, data.pcId, data.speaker);
     } else {
         game.socket.emit(`module.${MOD_ID}`, data);
     }
@@ -39,6 +40,8 @@ Hooks.once('ready', async () => {
             await BG3DialogueSystem.endConversation(data.npcId);
         } else if (data.type === "updateRelationship" && game.user.isGM) {
             await BG3DialogueSystem.updateRelationshipJournal(data.npcId, data.mod, data.tag);
+        } else if (data.type === "startCombat" && game.user.isGM) {
+            await BG3DialogueSystem.startCombat(data.npcId, data.pcId, data.speaker);
         }
     });
 });
@@ -150,6 +153,48 @@ class BG3DialogueSystem {
 
         ChatMessage.create({ speaker: { alias: data.speaker }, content: `<div class="bg3-chat-msg pc-msg"><b>${data.speaker}:</b> ${data.text}</div>` });
         if (data.nextNodeText) ChatMessage.create({ speaker: ChatMessage.getSpeaker({ actor: game.actors.get(data.npcId) }), content: `<div class="bg3-chat-msg npc-msg"><b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}</div>` });
+    }
+
+    static async startCombat(npcId, pcId, speaker) {
+        const npc = game.actors.get(npcId);
+        ChatMessage.create({
+            content: `<div style="background: rgba(198, 40, 40, 0.15); border: 2px solid #c62828; padding: 10px; border-radius: 5px; text-align: center; margin-top: 10px;">
+                        <h2 style="color: #c62828; margin: 0; font-family: Modesto Condensed, sans-serif;">⚔️ INITIATIVE WÜRFELN!</h2>
+                        <p style="margin: 5px 0 0 0; font-size: 1.1em; color: #ddd;"><b>${speaker}</b> greift zu den Waffen!</p>
+                      </div>`
+        });
+
+        // Tokens auf der Szene suchen und in den Tracker werfen
+        if (canvas.scene) {
+            const tokens = canvas.tokens.placeables.filter(t => t.actor?.id === npcId || t.actor?.id === pcId);
+            if (tokens.length > 0) {
+                let combat = game.combat || await Combat.create({ scene: canvas.scene.id });
+                const createData = tokens.filter(t => !t.inCombat).map(t => ({ 
+                    tokenId: t.id, 
+                    sceneId: canvas.scene.id, 
+                    actorId: t.actor.id, 
+                    hidden: t.document.hidden 
+                }));
+                
+                if (createData.length) {
+                    await combat.createEmbeddedDocuments("Combatant", createData);
+                }
+                
+                // Für den NSC automatisch die Initiative würfeln
+                const npcCombatants = combat.combatants.filter(c => c.actorId === npcId);
+                if (npcCombatants.length) {
+                    await combat.rollInitiative(npcCombatants.map(c => c.id));
+                }
+                
+                // Öffnet den Combat-Tab für den GM
+                ui.sidebar.activateTab("combat");
+            } else {
+                ui.notifications.warn("Keine passenden Token auf der aktuellen Karte gefunden. Kampf-Tracker konnte nicht automatisch befüllt werden.");
+            }
+        }
+        
+        // Das Log sauber speichern, da das Fenster ja direkt zugeht
+        await this.endConversation(npcId);
     }
 
     static async endConversation(npcId) {
@@ -286,6 +331,14 @@ class BG3DialogueWindow extends Application {
             const opt = this.fullTree[this.currentNodeKey].options[idx];
             let nextKey = opt.nextNode, resTxt = "", speaker = this.pc?.name || game.user.name;
 
+            // SOFORT-AKTION: KAMPF INITIIEREN
+            if (opt.action === "combat") {
+                dispatchSystemEvent({ type: "choiceMade", npcId: this.npc.id, speaker, text: opt.text, systemLog: "[Kampf initiiert]", nextNodeText: null });
+                dispatchSystemEvent({ type: "startCombat", npcId: this.npc.id, pcId: this.pc?.id, speaker });
+                this.close();
+                return; // Skript hier abbrechen, da Gespräch vorbei
+            }
+
             if (opt.check && this.pc) {
                 let roll = await new Roll("1d20").evaluate();
                 let d20 = roll.total;
@@ -301,10 +354,8 @@ class BG3DialogueWindow extends Application {
                 const finalDC = opt.dc + this._getDCMod();
                 const skillLabel = CONFIG.DND5E.skills[opt.check]?.label || opt.check.toUpperCase();
 
-                // 1. Wurf sofort in den Chat posten (Löst Dice3D Animation automatisch aus)
                 await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: this.pc }), flavor: `Fertigkeitswurf: ${skillLabel} (SG ${finalDC})` });
 
-                // 2. Interaktives Inspirations-Pop-Up bei Fehlschlag!
                 if (total < finalDC && this.pc.system.attributes.inspiration) {
                     const useInsp = await new Promise(resolve => {
                         new Dialog({
@@ -333,7 +384,6 @@ class BG3DialogueWindow extends Application {
                         }
                         
                         total = d20 + bonus;
-                        // Reroll in den Chat posten (Löst zweiten Dice3D Wurf aus)
                         await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: this.pc }), flavor: `✨ Inspiration: ${skillLabel} (SG ${finalDC})` });
                     }
                 }
