@@ -164,7 +164,6 @@ class BG3DialogueSystem {
                       </div>`
         });
 
-        // Tokens auf der Szene suchen und in den Tracker werfen
         if (canvas.scene) {
             const tokens = canvas.tokens.placeables.filter(t => t.actor?.id === npcId || t.actor?.id === pcId);
             if (tokens.length > 0) {
@@ -180,20 +179,17 @@ class BG3DialogueSystem {
                     await combat.createEmbeddedDocuments("Combatant", createData);
                 }
                 
-                // Für den NSC automatisch die Initiative würfeln
                 const npcCombatants = combat.combatants.filter(c => c.actorId === npcId);
                 if (npcCombatants.length) {
                     await combat.rollInitiative(npcCombatants.map(c => c.id));
                 }
                 
-                // Öffnet den Combat-Tab für den GM
                 ui.sidebar.activateTab("combat");
             } else {
                 ui.notifications.warn("Keine passenden Token auf der aktuellen Karte gefunden. Kampf-Tracker konnte nicht automatisch befüllt werden.");
             }
         }
         
-        // Das Log sauber speichern, da das Fenster ja direkt zugeht
         await this.endConversation(npcId);
     }
 
@@ -319,7 +315,8 @@ class BG3DialogueWindow extends Application {
         return { 
             npcName: this.npc.name, npcImg: this.npc.img, pcImg: this.pc?.img, pcName: this.pc?.name, text: node?.text, options: opts, 
             relationshipStatus: { class: this.relScore >= 5 ? "friendly" : (this.relScore <= -5 ? "hostile" : "neutral") },
-            showInsight: this.insightResults[this.currentNodeKey], insightText: node?.reactive_check?.success_text
+            showInsight: this.insightResults[this.currentNodeKey], insightText: node?.reactive_check?.success_text,
+            isEndNode: opts.length === 0  // HIER IST DER FIX, der den Verlassen-Knopf bei leeren Knoten einblendet!
         };
     }
 
@@ -331,12 +328,11 @@ class BG3DialogueWindow extends Application {
             const opt = this.fullTree[this.currentNodeKey].options[idx];
             let nextKey = opt.nextNode, resTxt = "", speaker = this.pc?.name || game.user.name;
 
-            // SOFORT-AKTION: KAMPF INITIIEREN
             if (opt.action === "combat") {
                 dispatchSystemEvent({ type: "choiceMade", npcId: this.npc.id, speaker, text: opt.text, systemLog: "[Kampf initiiert]", nextNodeText: null });
                 dispatchSystemEvent({ type: "startCombat", npcId: this.npc.id, pcId: this.pc?.id, speaker });
                 this.close();
-                return; // Skript hier abbrechen, da Gespräch vorbei
+                return; 
             }
 
             if (opt.check && this.pc) {
