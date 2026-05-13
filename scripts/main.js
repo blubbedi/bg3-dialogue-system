@@ -8,7 +8,7 @@ function dispatchSystemEvent(data) {
         if (data.type === "choiceMade") BG3DialogueSystem.processChoice(data);
         else if (data.type === "closeObserver") BG3DialogueSystem.endConversation(data.npcId);
         else if (data.type === "updateRelationship") BG3DialogueSystem.updateRelationshipJournal(data.npcId, data.mod, data.tag);
-        else if (data.type === "startCombat") BG3DialogueSystem.startCombat(data.npcId, data.pcId, data.speaker);
+        else if (data.type === "startCombat") BG3DialogueSystem.startCombat(data.npcId, data.speaker);
         else if (data.type === "processVote") BG3DialogueSystem.processVote(data);
         else if (data.type === "requestSkillCheck") BG3DialogueSystem.handleSkillRequest(data);
         else if (data.type === "resolveSkillCheck") BG3DialogueSystem.resolveSkillCheck(data);
@@ -33,7 +33,10 @@ Hooks.once('ready', async () => {
         
         if (data.type === "showDialog") {
             if (game.user.id === data.receiverId || data.broadcast) {
-                new BG3DialogueWindow(data.npcId, data.pcId, data.fullTree, data.startNode, false, data.relScore, data.relTags, data.isInitiator).render(true);
+                new BG3DialogueWindow(
+                    data.npcId, data.pcId, data.fullTree, data.startNode, false, 
+                    data.relScore, data.relTags, data.isInitiator, data.participantIds
+                ).render(true);
             }
         } else if (data.type === "syncVotes") {
             windows.forEach(w => { w.votes = data.votes; w.render(true); });
@@ -51,14 +54,16 @@ Hooks.once('ready', async () => {
             if (w) { w.isSpotlight = true; w.spotlightData = data; w.render(true); }
         } else if (data.type === "closeAll") {
             windows.forEach(w => w.close());
+        } else if (data.type === "openCombatTab") {
+            if (data.userIds.includes(game.user.id)) {
+                ui.sidebar.activateTab("combat");
+            }
         } else if (game.user.isGM) {
-            // GM verarbeitet Events von Spielern weiter
             dispatchSystemEvent(data);
         }
     });
 });
 
-// HIER WAR DER FEHLENDE BUTTON!
 Hooks.on('getSceneControlButtons', (controls) => {
     if (!game.user.isGM) return;
     const tokenControl = controls.find(c => c.name === "token");
@@ -117,23 +122,59 @@ class BG3DialogueSystem {
         const folder = game.folders.find(f => f.type === "Actor" && f.name === folderName);
         if (!folder) return ui.notifications.error(`Ordner '${folderName}' nicht gefunden.`);
         const npcs = game.actors.filter(a => a.folder?.id === folder.id);
-        const players = game.users.filter(u => u.active && !u.isGM);
+        const players = game.users.filter(u => u.active && !u.isGM && u.character);
 
         let npcOptions = npcs.map(n => `<option value="${n.id}">${n.name}</option>`).join("");
-        let playerOptions = `<option value="${game.user.id}">GM / Test-Modus</option>`;
-        playerOptions += players.map(p => `<option value="${p.id}">${p.name} (${p.character?.name || "Kein Charakter"})</option>`).join("");
+        let initiatorOptions = players.map(p => `<option value="${p.id}">${p.name} (${p.character.name})</option>`).join("");
+        
+        // Die Lobby-Checkboxen für die Berater
+        let participantCheckboxes = players.map(p => `
+            <label style="display: flex; align-items: center; margin-bottom: 5px; cursor: pointer;">
+                <input type="checkbox" name="participants" value="${p.id}" checked style="margin-right: 8px;"> 
+                ${p.name} (${p.character.name})
+            </label>
+        `).join("");
+
+        const content = `
+            <form>
+                <div class="form-group"><label>NSC (Gegenüber):</label><select name="npcId">${npcOptions}</select></div>
+                <div class="form-group"><label>Sprecher (Initiator):</label><select name="initiatorId">${initiatorOptions}</select></div>
+                <hr>
+                <div class="form-group" style="flex-direction: column; align-items: flex-start;">
+                    <label style="margin-bottom: 8px; font-weight: bold;">Wer ist bei dem Gespräch anwesend?</label>
+                    <div style="background: rgba(0,0,0,0.1); padding: 10px; border-radius: 5px; width: 100%; border: 1px solid #444;">
+                        ${participantCheckboxes}
+                    </div>
+                </div>
+            </form>
+        `;
 
         new Dialog({
-            title: "BG3 Konfigurator",
-            content: `<form><div class="form-group"><label>NSC:</label><select name="npcId">${npcOptions}</select></div>
-                      <div class="form-group"><label>Initiator (Sprecher):</label><select name="playerId">${playerOptions}</select></div></form>`,
+            title: "BG3 Lobby",
+            content: content,
             buttons: {
-                start: { label: "Gespräch Starten", callback: (html) => this.initiateDialogue(html.find('[name="npcId"]').val(), html.find('[name="playerId"]').val()) }
+                start: { 
+                    label: "Gespräch Starten", 
+                    callback: (html) => {
+                        const npcId = html.find('[name="npcId"]').val();
+                        const initId = html.find('[name="initiatorId"]').val();
+                        const partIds = [];
+                        html.find('input[name="participants"]:checked').each(function() {
+                            partIds.push($(this).val());
+                        });
+                        this.initiateDialogue(npcId, initId, partIds);
+                    }
+                }
             }
         }).render(true);
     }
 
-    static async initiateDialogue(npcId, initiatorUserId) {
+    static async initiateDialogue(npcId, initiatorUserId, participantIds) {
+        // Sicherstellen, dass der Initiator immer in der Teilnehmerliste ist
+        if (!participantIds.includes(initiatorUserId)) {
+            participantIds.push(initiatorUserId);
+        }
+
         const npc = game.actors.get(npcId);
         const user = game.users.get(initiatorUserId);
         
@@ -143,10 +184,13 @@ class BG3DialogueSystem {
         try {
             const fullTree = JSON.parse(rawJson);
             const relData = await this.getOrCreateRelationship(npc.name);
-            const activeUsers = game.users.filter(u => u.active && (u.character || u.isGM));
+            
+            // Nur ausgewählte Spieler und der GM werden berücksichtigt
+            const activeUsers = game.users.filter(u => participantIds.includes(u.id) || u.isGM);
             
             this.activeSessions[npcId] = { 
                 initiatorId: initiatorUserId, 
+                participantIds: participantIds,
                 pcName: user?.character?.name || user.name, 
                 votes: {}, 
                 fullTree, 
@@ -159,11 +203,15 @@ class BG3DialogueSystem {
                 const pcId = u.character ? u.character.id : null;
                 
                 if (u.id === game.user.id) {
-                    new BG3DialogueWindow(npcId, pcId, fullTree, "startNode", false, relData.score, relData.tags, isInitiator).render(true);
+                    new BG3DialogueWindow(
+                        npcId, pcId, fullTree, "startNode", false, 
+                        relData.score, relData.tags, isInitiator, participantIds
+                    ).render(true);
                 } else {
                     game.socket.emit(`module.${MOD_ID}`, { 
                         type: "showDialog", npcId, pcId: pcId, receiverId: u.id, 
-                        fullTree, startNode: "startNode", relScore: relData.score, relTags: relData.tags, isInitiator 
+                        fullTree, startNode: "startNode", relScore: relData.score, 
+                        relTags: relData.tags, isInitiator, participantIds 
                     });
                 }
             });
@@ -181,10 +229,8 @@ class BG3DialogueSystem {
         const targetUser = game.users.find(u => u.character?.id === data.targetActorId);
         if (!targetUser) return;
         
-        // Wenn der Initiator sich selbst gewählt hat
         if (targetUser.id === game.user.id) {
              ui.notifications.info("Du führst die Probe selbst aus.");
-             // Das wird im Frontend direkt verarbeitet
              return;
         }
 
@@ -253,28 +299,48 @@ class BG3DialogueSystem {
         if (data.nextNodeText) ChatMessage.create({ speaker: ChatMessage.getSpeaker({ actor: game.actors.get(data.npcId) }), content: `<div class="bg3-chat-msg npc-msg"><b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}</div>` });
     }
 
-    static async startCombat(npcId, pcId, speaker) {
+    static async startCombat(npcId, speaker) {
+        const session = this.activeSessions[npcId];
+        if (!session) return;
+
         const npc = game.actors.get(npcId);
+        const participantIds = session.participantIds;
+        
+        // Finde die Actor-IDs aller beteiligten Spieler
+        const pcActorIds = participantIds.map(uid => game.users.get(uid)?.character?.id).filter(id => id);
+
         ChatMessage.create({
             content: `<div style="background: rgba(198, 40, 40, 0.15); border: 2px solid #c62828; padding: 10px; border-radius: 5px; text-align: center; margin-top: 10px;">
                         <h2 style="color: #c62828; margin: 0; font-family: Modesto Condensed, sans-serif;">⚔️ INITIATIVE WÜRFELN!</h2>
-                        <p style="margin: 5px 0 0 0; font-size: 1.1em; color: #ddd;"><b>${speaker}</b> greift zu den Waffen!</p>
+                        <p style="margin: 5px 0 0 0; font-size: 1.1em; color: #ddd;"><b>${speaker}</b> und die Gruppe greifen zu den Waffen!</p>
                       </div>`
         });
 
         if (canvas.scene) {
-            const tokens = canvas.tokens.placeables.filter(t => t.actor?.id === npcId || t.actor?.id === pcId);
+            // Nur Tokens von NSC und den AUSGEWÄHLTEN Spielern greifen
+            const tokens = canvas.tokens.placeables.filter(t => t.actor?.id === npcId || pcActorIds.includes(t.actor?.id));
+            
             if (tokens.length > 0) {
                 let combat = game.combat || await Combat.create({ scene: canvas.scene.id });
+                
                 const createData = tokens.filter(t => !t.inCombat).map(t => ({ 
                     tokenId: t.id, sceneId: canvas.scene.id, actorId: t.actor.id, hidden: t.document.hidden 
                 }));
+                
                 if (createData.length) await combat.createEmbeddedDocuments("Combatant", createData);
+                
+                // Für NSC automatisch würfeln
                 const npcCombatants = combat.combatants.filter(c => c.actorId === npcId);
                 if (npcCombatants.length) await combat.rollInitiative(npcCombatants.map(c => c.id));
+                
+                // Combat Tab beim GM öffnen
                 ui.sidebar.activateTab("combat");
+                
+                // Signal an alle beteiligten Spieler feuern, damit ihr Combat-Tab aufpoppt!
+                game.socket.emit(`module.${MOD_ID}`, { type: "openCombatTab", userIds: participantIds });
             }
         }
+        
         game.socket.emit(`module.${MOD_ID}`, { type: "closeAll", npcId: npcId });
         await this.endConversation(npcId);
     }
@@ -306,7 +372,7 @@ class BG3DialogueSystem {
 }
 
 class BG3DialogueWindow extends Application {
-    constructor(npcId, pcId, fullTree, currentNodeKey, isObserver = false, relScore = 0, relTags = [], isInitiator = false) {
+    constructor(npcId, pcId, fullTree, currentNodeKey, isObserver = false, relScore = 0, relTags = [], isInitiator = false, participantIds = []) {
         super();
         this.npc = game.actors.get(npcId);
         this.pc = pcId ? game.actors.get(pcId) : null;
@@ -316,6 +382,7 @@ class BG3DialogueWindow extends Application {
         this.relScore = relScore;
         this.relTags = relTags;
         this.isInitiator = isInitiator;
+        this.participantIds = participantIds; // Die Lobby-Auswahl speichern
         this.votes = {}; 
         this.isSpotlight = false;
         this.showDelegation = false;
@@ -411,7 +478,8 @@ class BG3DialogueWindow extends Application {
     _getPotentialDelegates() {
         const node = this.fullTree[this.currentNodeKey];
         const opt = node.options[this.pendingOptIndex];
-        return game.users.filter(u => u.active && u.character).map(u => ({
+        // Filtere nur die Spieler, die in der Lobby ausgewählt wurden!
+        return game.users.filter(u => this.participantIds.includes(u.id) && u.character).map(u => ({
             id: u.character.id, name: u.character.name, img: u.character.img,
             bonus: u.character.system.skills[opt.check]?.total || 0,
             isMe: u.id === game.user.id
@@ -430,7 +498,7 @@ class BG3DialogueWindow extends Application {
             } else {
                 if (opt.action === "combat") {
                     dispatchSystemEvent({ type: "choiceMade", npcId: this.npc.id, speaker: this.pc?.name || "Gruppe", text: opt.text, systemLog: "[Kampf initiiert]", nextNodeText: null });
-                    dispatchSystemEvent({ type: "startCombat", npcId: this.npc.id, pcId: this.pc?.id, speaker: this.pc?.name || "Gruppe" });
+                    dispatchSystemEvent({ type: "startCombat", npcId: this.npc.id, speaker: this.pc?.name || "Gruppe" });
                     return;
                 }
 
@@ -444,19 +512,16 @@ class BG3DialogueWindow extends Application {
             }
         });
 
-        // Abbrechen bei Delegations-Menü
         html.find('.cancel-delegation').click(() => {
             this.showDelegation = false;
             this.render(true);
         });
 
-        // Experte auswählen
         html.find('.delegate-btn').click(async ev => {
             const targetActorId = $(ev.currentTarget).data('actor-id');
             const opt = this.fullTree[this.currentNodeKey].options[this.pendingOptIndex];
             const finalDC = opt.dc + this._getDCMod();
 
-            // Wenn der Initiator sich selbst gewählt hat, würfeln wir sofort!
             if (targetActorId === this.pc.id) {
                 this.showDelegation = false;
                 await this._rollForCheck(this.pendingOptIndex, finalDC, this.pc);
@@ -471,7 +536,6 @@ class BG3DialogueWindow extends Application {
             }
         });
 
-        // Spotlight-Würfel Button für den delegierten Spieler
         html.find('.spotlight-btn').click(async () => {
             const data = this.spotlightData;
             this.isSpotlight = false;
@@ -485,7 +549,6 @@ class BG3DialogueWindow extends Application {
         });
     }
 
-    // Die zentrale Würfel-Funktion (wird sowohl vom Initiator als auch vom Wingman genutzt)
     async _rollForCheck(optIndex, finalDC, rollerPc, overrideSkill = null) {
         const opt = this.fullTree[this.currentNodeKey].options[optIndex];
         const skillId = overrideSkill || opt.check;
@@ -505,7 +568,6 @@ class BG3DialogueWindow extends Application {
 
         await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: rollerPc }), flavor: `Gesprächsprobe: ${skillLabel} (SG ${finalDC})` });
 
-        // Inspiration einbauen (simpel)
         if (total < finalDC && rollerPc.system.attributes.inspiration) {
             const useInsp = await new Promise(resolve => {
                 new Dialog({
@@ -529,7 +591,6 @@ class BG3DialogueWindow extends Application {
 
         const success = total >= finalDC;
         
-        // Das Ergebnis an den Server senden
         dispatchSystemEvent({ 
             type: "resolveSkillCheck", 
             npcId: this.npc.id, 
