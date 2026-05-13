@@ -1,57 +1,60 @@
 <div class="bg3-dialog-wrapper">
+    {{#if showDelegation}}
+    <div class="bg3-delegation-overlay">
+        <h2 class="delegation-title">Wer soll die Probe übernehmen?</h2>
+        <div class="delegation-list">
+            {{#each potentialDelegates}}
+            <div class="delegate-btn" data-actor-id="{{id}}">
+                <img src="{{img}}" class="delegate-img">
+                <span>{{name}}</span>
+                <span class="delegate-bonus">{{#if (gte bonus 0)}}+{{/if}}{{bonus}}</span>
+            </div>
+            {{/each}}
+        </div>
+        <button class="cancel-delegation" style="margin-top: 20px; background: transparent; color: #888; border: none; cursor: pointer;">Abbrechen</button>
+    </div>
+    {{/if}}
+
+    {{#if isSpotlight}}
+    <div class="bg3-spotlight-ui">
+        <h2 style="color: #c1a35b;">{{npcName}} wartet auf deine Antwort!</h2>
+        <p style="font-size: 1.3rem; margin-bottom: 30px;">Du wurdest für die Probe <strong>{{skillLabel}}</strong> ausgewählt.</p>
+        <button class="spotlight-btn"><i class="fas fa-dice-d20"></i> JETZT WÜRFELN</button>
+    </div>
+    {{else}}
     <div class="bg3-header">
         <img src="{{npcImg}}" class="bg3-portrait npc-portrait">
         <div class="header-info">
             <h2 class="bg3-npc-name">{{npcName}}</h2>
-            <div class="rel-indicator status-{{relationshipStatus.class}}" title="Stimmung: {{relationshipStatus.name}}"></div>
+            <div class="rel-indicator status-{{relationshipStatus.class}}" title="Stimmung"></div>
         </div>
     </div>
     
     <div class="bg3-body">
         <p class="bg3-main-text">{{{text}}}</p>
-        
         {{#if showInsight}}
-            <div class="bg3-insight-box">
-                <i class="fas fa-eye"></i> <em>{{{insightText}}}</em>
-            </div>
+            <div class="bg3-insight-box"><i class="fas fa-eye"></i> <em>{{{insightText}}}</em></div>
         {{/if}}
     </div>
 
     <div class="bg3-footer">
-        <div class="bg3-pc-row">
-            {{#if pcImg}}
-                <img src="{{pcImg}}" class="bg3-portrait pc-portrait" title="{{pcName}}">
-            {{/if}}
-            
-            <div class="bg3-options-container">
-                <span class="bg3-pc-name">
-                    {{#if isEndNode}}
-                        Gespräch beendet:
-                    {{else}}
-                        {{#if pcName}}{{pcName}} antwortet:{{else}}Deine Antwort:{{/if}}
-                    {{/if}}
-                </span>
-                
-                <ul class="bg3-options-list">
-                    {{#each options as |opt i|}}
-                        <li class="dialog-option {{#if ../isObserver}}disabled{{/if}}" data-index="{{i}}">
-                            <span class="opt-number">{{add i 1}}.</span> {{opt.displayHtml}}
-                        </li>
-                    {{/each}}
-                    
-                    {{#if isEndNode}}
-                        <li class="dialog-close-btn {{#if isObserver}}disabled{{/if}}">
-                            <i class="fas fa-sign-out-alt"></i> Verlassen
-                        </li>
-                    {{/if}}
-                </ul>
-            </div>
-        </div>
-
-        {{#if isObserver}}
-            <p style="color: #c1a35b; text-align: center; margin-top: 15px; font-weight: bold;">
-                <i class="fas fa-eye"></i> GM-ANSICHT: Warte auf Spieler...
+        <ul class="bg3-options-list">
+            {{#each options as |opt i|}}
+                <li class="dialog-option {{#if opt.votedByMe}}voted{{/if}} {{#if ../isObserver}}disabled{{/if}}" data-index="{{i}}">
+                    <span><span class="opt-number">{{add i 1}}.</span> {{opt.displayHtml}}</span>
+                    <div class="voter-portraits">
+                        {{#each opt.voters}}
+                            <img src="{{this.img}}" class="voter-img" title="{{this.name}} hat hierfür gestimmt">
+                        {{/each}}
+                    </div>
+                </li>
+            {{/each}}
+        </ul>
+        {{#if (not isInitiator)}}
+            <p style="color: #c1a35b; text-align: center; margin-top: 15px; font-size: 0.8em;">
+                <i class="fas fa-info-circle"></i> Du bist Ratgeber. Klicke auf eine Option, um abzustimmen.
             </p>
         {{/if}}
     </div>
+    {{/if}}
 </div>
