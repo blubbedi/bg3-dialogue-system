@@ -127,7 +127,6 @@ class BG3DialogueSystem {
         let npcOptions = npcs.map(n => `<option value="${n.id}">${n.name}</option>`).join("");
         let initiatorOptions = players.map(p => `<option value="${p.id}">${p.name} (${p.character.name})</option>`).join("");
         
-        // Die Lobby-Checkboxen für die Berater
         let participantCheckboxes = players.map(p => `
             <label style="display: flex; align-items: center; margin-bottom: 5px; cursor: pointer;">
                 <input type="checkbox" name="participants" value="${p.id}" checked style="margin-right: 8px;"> 
@@ -170,7 +169,6 @@ class BG3DialogueSystem {
     }
 
     static async initiateDialogue(npcId, initiatorUserId, participantIds) {
-        // Sicherstellen, dass der Initiator immer in der Teilnehmerliste ist
         if (!participantIds.includes(initiatorUserId)) {
             participantIds.push(initiatorUserId);
         }
@@ -184,8 +182,6 @@ class BG3DialogueSystem {
         try {
             const fullTree = JSON.parse(rawJson);
             const relData = await this.getOrCreateRelationship(npc.name);
-            
-            // Nur ausgewählte Spieler und der GM werden berücksichtigt
             const activeUsers = game.users.filter(u => participantIds.includes(u.id) || u.isGM);
             
             this.activeSessions[npcId] = { 
@@ -249,7 +245,7 @@ class BG3DialogueSystem {
         const nextKey = data.success ? opt.passNode : opt.failNode;
         
         const resultColor = data.success ? "#4db8ff" : "#ff4d4d";
-        const resTxt = `<br><span style="color: ${resultColor}; font-size: 0.85em;">↳ [Delegierter Wurf: ${data.total} (W20: ${data.d20}) vs SG ${data.finalDC} ➔ <b>${data.success ? 'ERFOLG' : 'FEHLSCHLAG'}</b>]</span>`;
+        const resTxt = `<br><span style="color: ${resultColor}; font-size: 0.85em;">↳ [Gewürfelt: ${data.total} (W20: ${data.d20}) vs SG ${data.finalDC} ➔ <b>${data.success ? 'ERFOLG' : 'FEHLSCHLAG'}</b>]</span>`;
 
         this.syncNodeAcrossClients({ npcId: data.npcId, speaker: data.speaker, text: opt.text + resTxt, nextKey: nextKey });
     }
@@ -306,7 +302,6 @@ class BG3DialogueSystem {
         const npc = game.actors.get(npcId);
         const participantIds = session.participantIds;
         
-        // Finde die Actor-IDs aller beteiligten Spieler
         const pcActorIds = participantIds.map(uid => game.users.get(uid)?.character?.id).filter(id => id);
 
         ChatMessage.create({
@@ -317,7 +312,6 @@ class BG3DialogueSystem {
         });
 
         if (canvas.scene) {
-            // Nur Tokens von NSC und den AUSGEWÄHLTEN Spielern greifen
             const tokens = canvas.tokens.placeables.filter(t => t.actor?.id === npcId || pcActorIds.includes(t.actor?.id));
             
             if (tokens.length > 0) {
@@ -329,14 +323,10 @@ class BG3DialogueSystem {
                 
                 if (createData.length) await combat.createEmbeddedDocuments("Combatant", createData);
                 
-                // Für NSC automatisch würfeln
                 const npcCombatants = combat.combatants.filter(c => c.actorId === npcId);
                 if (npcCombatants.length) await combat.rollInitiative(npcCombatants.map(c => c.id));
                 
-                // Combat Tab beim GM öffnen
                 ui.sidebar.activateTab("combat");
-                
-                // Signal an alle beteiligten Spieler feuern, damit ihr Combat-Tab aufpoppt!
                 game.socket.emit(`module.${MOD_ID}`, { type: "openCombatTab", userIds: participantIds });
             }
         }
@@ -382,7 +372,7 @@ class BG3DialogueWindow extends Application {
         this.relScore = relScore;
         this.relTags = relTags;
         this.isInitiator = isInitiator;
-        this.participantIds = participantIds; // Die Lobby-Auswahl speichern
+        this.participantIds = participantIds;
         this.votes = {}; 
         this.isSpotlight = false;
         this.showDelegation = false;
@@ -422,11 +412,22 @@ class BG3DialogueWindow extends Application {
         if (node.reactive_check && this.insightResults[this.currentNodeKey] === undefined) {
             let roll = await new Roll("1d20").evaluate();
             let d20 = roll.total;
-            if (d20 === 1 && this._isHalfling()) {
+            const skillId = node.reactive_check.skill;
+
+            if (d20 === 1 && this._isHalfling(this.pc)) {
                 roll = await new Roll("1d20").evaluate();
                 d20 = roll.total;
             }
-            const bonus = this.pc ? (this.pc.system.skills[node.reactive_check.skill]?.total || 0) : 0;
+
+            if (this.pc) {
+                const hasRT = this.pc.items.some(i => i.name.toLowerCase().includes("reliable talent") || i.name.toLowerCase().includes("verlässliches talent"));
+                const isProf = this.pc.system.skills[skillId]?.value >= 1;
+                if (hasRT && isProf && d20 < 10) {
+                    d20 = 10;
+                }
+            }
+
+            const bonus = this.pc ? (this.pc.system.skills[skillId]?.total || 0) : 0;
             const success = (d20 + bonus) >= (node.reactive_check.dc + this._getDCMod());
             this.insightResults[this.currentNodeKey] = success;
             
@@ -439,10 +440,10 @@ class BG3DialogueWindow extends Application {
 
     _getDCMod() { return this.relScore <= -5 ? 5 : (this.relScore < 0 ? 2 : (this.relScore >= 5 ? -5 : (this.relScore > 0 ? -2 : 0))); }
 
-    _isHalfling() {
-        if (!this.pc) return false;
-        const raceItem = this.pc.items.find(i => i.type === "race");
-        const raceStr = raceItem ? raceItem.name.toLowerCase() : (this.pc.system.details.race?.toLowerCase() || "");
+    _isHalfling(actor) {
+        if (!actor) return false;
+        const raceItem = actor.items.find(i => i.type === "race");
+        const raceStr = raceItem ? raceItem.name.toLowerCase() : (actor.system.details.race?.toLowerCase() || "");
         return raceStr.includes("halbling") || raceStr.includes("halfling");
     }
 
@@ -478,7 +479,6 @@ class BG3DialogueWindow extends Application {
     _getPotentialDelegates() {
         const node = this.fullTree[this.currentNodeKey];
         const opt = node.options[this.pendingOptIndex];
-        // Filtere nur die Spieler, die in der Lobby ausgewählt wurden!
         return game.users.filter(u => this.participantIds.includes(u.id) && u.character).map(u => ({
             id: u.character.id, name: u.character.name, img: u.character.img,
             bonus: u.character.system.skills[opt.check]?.total || 0,
@@ -556,10 +556,20 @@ class BG3DialogueWindow extends Application {
         let roll = await new Roll("1d20").evaluate();
         let d20 = roll.total;
         
-        if (d20 === 1 && this._isHalfling()) {
+        // Halblingsglück
+        if (d20 === 1 && this._isHalfling(rollerPc)) {
             ui.notifications.info("🍀 Halblingsglück!");
             roll = await new Roll("1d20").evaluate();
             d20 = roll.total;
+        }
+
+        // Verlässliches Talent (Reliable Talent)
+        const hasReliableTalent = rollerPc.items.some(i => i.name.toLowerCase().includes("reliable talent") || i.name.toLowerCase().includes("verlässliches talent"));
+        const isProficient = rollerPc.system.skills[skillId]?.value >= 1;
+
+        if (hasReliableTalent && isProficient && d20 < 10) {
+            ui.notifications.info("🛡️ Verlässliches Talent: Würfelwurf wird als 10 gewertet!");
+            d20 = 10;
         }
 
         const bonus = rollerPc.system.skills[skillId]?.total || 0;
@@ -568,6 +578,7 @@ class BG3DialogueWindow extends Application {
 
         await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: rollerPc }), flavor: `Gesprächsprobe: ${skillLabel} (SG ${finalDC})` });
 
+        // Inspiration
         if (total < finalDC && rollerPc.system.attributes.inspiration) {
             const useInsp = await new Promise(resolve => {
                 new Dialog({
@@ -584,6 +595,17 @@ class BG3DialogueWindow extends Application {
                 await rollerPc.update({"system.attributes.inspiration": false});
                 roll = await new Roll("1d20").evaluate();
                 d20 = roll.total;
+                
+                if (d20 === 1 && this._isHalfling(rollerPc)) {
+                    ui.notifications.info("🍀 Halblingsglück!");
+                    roll = await new Roll("1d20").evaluate();
+                    d20 = roll.total;
+                }
+                if (hasReliableTalent && isProficient && d20 < 10) {
+                    ui.notifications.info("🛡️ Verlässliches Talent: Würfelwurf wird als 10 gewertet!");
+                    d20 = 10;
+                }
+
                 total = d20 + bonus;
                 await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: rollerPc }), flavor: `✨ Inspiration: ${skillLabel} (SG ${finalDC})` });
             }
