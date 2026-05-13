@@ -299,10 +299,16 @@ class BG3DialogueSystem {
         const session = this.activeSessions[npcId];
         if (!session) return;
 
-        const npc = game.actors.get(npcId);
-        const participantIds = session.participantIds;
+        const participantIds = session.participantIds || [];
         
-        const pcActorIds = participantIds.map(uid => game.users.get(uid)?.character?.id).filter(id => id);
+        // STRIKTER FILTER: Nur die Actor-IDs der explizit angehakten Spieler sammeln
+        const pcActorIds = [];
+        for (let uid of participantIds) {
+            const user = game.users.get(uid);
+            if (user && user.character && user.character.id) {
+                pcActorIds.push(user.character.id);
+            }
+        }
 
         ChatMessage.create({
             content: `<div style="background: rgba(198, 40, 40, 0.15); border: 2px solid #c62828; padding: 10px; border-radius: 5px; text-align: center; margin-top: 10px;">
@@ -312,21 +318,30 @@ class BG3DialogueSystem {
         });
 
         if (canvas.scene) {
-            const tokens = canvas.tokens.placeables.filter(t => t.actor?.id === npcId || pcActorIds.includes(t.actor?.id));
+            // STRIKTER FILTER: Greift nur Tokens ab, deren Actor-ID exakt zum NSC oder den ausgewählten Spielern passt
+            const tokensToAdd = canvas.tokens.placeables.filter(t => {
+                const actorId = t.actor?.id;
+                if (!actorId) return false;
+                return actorId === npcId || pcActorIds.includes(actorId);
+            });
             
-            if (tokens.length > 0) {
+            if (tokensToAdd.length > 0) {
+                // Holt den aktiven Kampf oder erstellt einen neuen
                 let combat = game.combat || await Combat.create({ scene: canvas.scene.id });
                 
-                const createData = tokens.filter(t => !t.inCombat).map(t => ({ 
+                const createData = tokensToAdd.filter(t => !t.inCombat).map(t => ({ 
                     tokenId: t.id, sceneId: canvas.scene.id, actorId: t.actor.id, hidden: t.document.hidden 
                 }));
                 
-                if (createData.length) await combat.createEmbeddedDocuments("Combatant", createData);
+                if (createData.length > 0) {
+                    await combat.createEmbeddedDocuments("Combatant", createData);
+                }
                 
                 const npcCombatants = combat.combatants.filter(c => c.actorId === npcId);
                 if (npcCombatants.length) await combat.rollInitiative(npcCombatants.map(c => c.id));
                 
                 ui.sidebar.activateTab("combat");
+                // Nur die beteiligten Spieler zwingen, den Combat-Tab zu öffnen
                 game.socket.emit(`module.${MOD_ID}`, { type: "openCombatTab", userIds: participantIds });
             }
         }
