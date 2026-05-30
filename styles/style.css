@@ -19,6 +19,15 @@
 
 .bg3-main-text { font-size: 1.25rem; line-height: 1.5; margin: 20px 0; color: #f0ede1; }
 
+.bg3-insight-box {
+    background: rgba(77, 184, 255, 0.1);
+    border: 1px solid #4db8ff;
+    padding: 10px;
+    border-radius: 4px;
+    margin-top: 15px;
+    color: #4db8ff;
+}
+
 /* Optionen & Voting */
 .bg3-options-list { list-style: none; padding: 0; margin: 0; }
 .dialog-option {
@@ -35,6 +44,7 @@
 }
 .dialog-option:hover { background: rgba(193, 163, 91, 0.2); border-color: #c1a35b; }
 .dialog-option.voted { border-left: 4px solid #c1a35b; background: rgba(193, 163, 91, 0.1); }
+.dialog-option.disabled { opacity: 0.7; cursor: not-allowed; }
 
 .voter-portraits { display: flex; gap: 4px; }
 .voter-img { 
