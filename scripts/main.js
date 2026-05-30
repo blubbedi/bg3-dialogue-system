@@ -64,7 +64,6 @@ Hooks.once('ready', async () => {
     });
 });
 
-// V14 Fix für Scene Controls Absturz
 Hooks.on('getSceneControlButtons', (controls) => {
     if (!game.user.isGM) return;
     const controlsArray = Array.isArray(controls) ? controls : Object.values(controls);
@@ -355,7 +354,7 @@ class BG3DialogueSystem {
         delete this.activeSessions[npcId];
         
         const logTitle = `${game.actors.get(npcId).name} & ${session.pcName}`;
-        let logsFolder = game.folders.find(f => f.name === "Logs");
+        let logsFolder = game.folders.find(f => f.name === "Gespräche");
         let logEntry = game.journal.find(j => j.name === logTitle && j.folder?.id === logsFolder?.id);
         const newContent = `<hr><h3>${new Date().toLocaleString()}</h3>` + session.history.map(h => `<p>${h}</p>`).join("");
         
@@ -423,12 +422,13 @@ class BG3DialogueWindow extends Application {
 
     async _handleReactiveInsight(node) {
         if (node.reactive_check && this.insightResults[this.currentNodeKey] === undefined) {
-            let roll = await new Roll({formula: "1d20"}).evaluate();
+            // V14 FIX: Zurück auf reinen String für Formel
+            let roll = await new Roll("1d20").evaluate();
             let d20 = roll.total;
             const skillId = node.reactive_check.skill;
 
             if (d20 === 1 && this._isHalfling(this.pc)) {
-                roll = await new Roll({formula: "1d20"}).evaluate();
+                roll = await new Roll("1d20").evaluate();
                 d20 = roll.total;
             }
 
@@ -566,15 +566,18 @@ class BG3DialogueWindow extends Application {
         const opt = this.fullTree[this.currentNodeKey].options[optIndex];
         const skillId = overrideSkill || opt.check;
         
-        let roll = await new Roll({formula: "1d20"}).evaluate();
+        // V14 FIX: Zurück auf reinen String für Formel
+        let roll = await new Roll("1d20").evaluate();
         let d20 = roll.total;
         
+        // Halblingsglück
         if (d20 === 1 && this._isHalfling(rollerPc)) {
             ui.notifications.info("🍀 Halblingsglück!");
-            roll = await new Roll({formula: "1d20"}).evaluate();
+            roll = await new Roll("1d20").evaluate();
             d20 = roll.total;
         }
 
+        // Verlässliches Talent (Reliable Talent)
         const hasReliableTalent = rollerPc.items.some(i => i.name.toLowerCase().includes("reliable talent") || i.name.toLowerCase().includes("verlässliches talent"));
         const isProficient = rollerPc.system.skills[skillId]?.value >= 1;
 
@@ -589,6 +592,7 @@ class BG3DialogueWindow extends Application {
 
         await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: rollerPc }), flavor: `Gesprächsprobe: ${skillLabel} (SG ${finalDC})` });
 
+        // Inspiration
         if (total < finalDC && rollerPc.system.attributes.inspiration) {
             const useInsp = await new Promise(resolve => {
                 new Dialog({
@@ -603,12 +607,12 @@ class BG3DialogueWindow extends Application {
 
             if (useInsp) {
                 await rollerPc.update({"system.attributes.inspiration": false});
-                roll = await new Roll({formula: "1d20"}).evaluate();
+                roll = await new Roll("1d20").evaluate();
                 d20 = roll.total;
                 
                 if (d20 === 1 && this._isHalfling(rollerPc)) {
                     ui.notifications.info("🍀 Halblingsglück!");
-                    roll = await new Roll({formula: "1d20"}).evaluate();
+                    roll = await new Roll("1d20").evaluate();
                     d20 = roll.total;
                 }
                 if (hasReliableTalent && isProficient && d20 < 10) {
