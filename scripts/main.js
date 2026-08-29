@@ -2,6 +2,35 @@ const MOD_ID = 'bg3-dialogue-system';
 
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
+// Zentraler Sound-Controller für Sprachausgabe
+class BG3AudioController {
+    static currentSound = null;
+
+    static playVoice(src) {
+        if (!src) return;
+        this.stopVoice();
+        try {
+            foundry.audio.AudioHelper.play({
+                src: src,
+                volume: game.settings.get("core", "globalInterfaceVolume") || 0.8,
+                autoplay: true,
+                loop: false
+            }, false).then(sound => {
+                this.currentSound = sound;
+            });
+        } catch (e) {
+            log(`Audiofehler beim Abspielen von ${src}: ${e}`);
+        }
+    }
+
+    static stopVoice() {
+        if (this.currentSound) {
+            try { this.currentSound.stop(); } catch(e) {}
+            this.currentSound = null;
+        }
+    }
+}
+
 // Zentraler Verteiler für alle Events
 function dispatchSystemEvent(data) {
     if (game.user.isGM) {
@@ -38,6 +67,10 @@ Hooks.once('ready', async () => {
                     data.relScore, data.relTags, data.isInitiator, data.participantIds
                 ).render(true);
             }
+        } else if (data.type === "playVoice") {
+            if (data.userIds && data.userIds.includes(game.user.id)) {
+                BG3AudioController.playVoice(data.audioSrc);
+            }
         } else if (data.type === "syncVotes") {
             windows.forEach(w => { w.votes = data.votes; w.render(true); });
         } else if (data.type === "syncNode") {
@@ -53,6 +86,7 @@ Hooks.once('ready', async () => {
             const w = windows.find(win => !win.isObserver);
             if (w) { w.isSpotlight = true; w.spotlightData = data; w.render(true); }
         } else if (data.type === "closeAll") {
+            BG3AudioController.stopVoice();
             windows.forEach(w => w.close());
         } else if (data.type === "openCombatTab") {
             if (data.userIds.includes(game.user.id)) {
@@ -68,14 +102,18 @@ Hooks.on('getSceneControlButtons', (controls) => {
     if (!game.user.isGM) return;
     const controlsArray = Array.isArray(controls) ? controls : Object.values(controls);
     const tokenControl = controlsArray.find(c => c.name === "token");
-    if (tokenControl) {
-        tokenControl.tools.push({
-            name: "start-bg3-conv",
-            title: "BG3 Gespräch starten",
-            icon: "fas fa-comments",
-            onClick: () => BG3DialogueSystem.showSelectionDialog(),
-            button: true
-        });
+    if (tokenControl && tokenControl.tools) {
+        const alreadyExists = tokenControl.tools.some(t => t.name === "start-bg3-conv");
+        if (!alreadyExists) {
+            tokenControl.tools.push({
+                name: "start-bg3-conv",
+                title: "BG3 Dialog-System",
+                icon: "fas fa-comments",
+                visible: true,
+                onClick: () => BG3DialogueSystem.showMainMenu(),
+                button: true
+            });
+        }
     }
 });
 
@@ -86,6 +124,101 @@ class BG3DialogueSystem {
         let parent = game.folders.find(f => f.name === "Gespräche" && f.type === "JournalEntry") || await Folder.create({ name: "Gespräche", type: "JournalEntry" });
         if (!game.folders.find(f => f.name === "Beziehung" && f.folder?.id === parent.id)) await Folder.create({ name: "Beziehung", type: "JournalEntry", folder: parent.id });
         if (!game.folders.find(f => f.name === "Logs" && f.folder?.id === parent.id)) await Folder.create({ name: "Logs", type: "JournalEntry", folder: parent.id });
+    }
+
+    // Haupt-Auswahlmenü
+    static showMainMenu() {
+        new Dialog({
+            title: "BG3 Dialog-System",
+            content: `
+                <div style="text-align: center; padding: 10px 0;">
+                    <p style="margin-bottom: 15px; font-size: 1.1em;">Wähle eine Aktion:</p>
+                </div>
+            `,
+            buttons: {
+                start: {
+                    icon: '<i class="fas fa-play"></i>',
+                    label: "Gespräch starten",
+                    callback: () => this.showSelectionDialog()
+                },
+                editor: {
+                    icon: '<i class="fas fa-edit"></i>',
+                    label: "NSC-Dialog-Editor",
+                    callback: () => this.showNPCDialogEditor()
+                }
+            },
+            default: "start"
+        }).render(true);
+    }
+
+    // NSC-Dialog-Editor mit Dateiwähler
+    static showNPCDialogEditor(selectedNpcId = null) {
+        const folderName = game.settings.get(MOD_ID, 'npcFolder');
+        const folder = game.folders.find(f => f.type === "Actor" && f.name === folderName);
+        if (!folder) return ui.notifications.error(`Ordner '${folderName}' nicht gefunden.`);
+        
+        const npcs = game.actors.filter(a => a.folder?.id === folder.id);
+        if (npcs.length === 0) return ui.notifications.warn(`Keine Akteure im Ordner '${folderName}' gefunden.`);
+
+        const activeNpc = selectedNpcId ? game.actors.get(selectedNpcId) : npcs[0];
+        const currentPath = activeNpc.getFlag(MOD_ID, "dialogPath") || "";
+
+        let npcOptions = npcs.map(n => `<option value="${n.id}" ${n.id === activeNpc.id ? 'selected' : ''}>${n.name}</option>`).join("");
+
+        const content = `
+            <form style="padding: 5px;">
+                <div class="form-group">
+                    <label>NSC auswählen:</label>
+                    <select id="bg3-editor-npc-select">${npcOptions}</select>
+                </div>
+                <hr>
+                <div class="form-group" style="display: flex; flex-direction: column; align-items: flex-start;">
+                    <label style="font-weight: bold; margin-bottom: 5px;">Dialog JSON-Datei:</label>
+                    <div style="display: flex; width: 100%; gap: 5px;">
+                        <input type="text" id="bg3-dialog-file-path" value="${currentPath}" placeholder="z.B. dialogues/pelor/dialogue.json" style="flex: 1;">
+                        <button type="button" id="bg3-browse-dialog" style="width: 40px;"><i class="fas fa-file-import"></i></button>
+                    </div>
+                    <small style="color: #666; margin-top: 4px;">Wähle eine .json-Datei aus oder lade eine neue hoch.</small>
+                </div>
+            </form>
+        `;
+
+        const d = new Dialog({
+            title: `Dialog-Editor: ${activeNpc.name}`,
+            content: content,
+            buttons: {
+                save: {
+                    icon: '<i class="fas fa-save"></i>',
+                    label: "Speichern",
+                    callback: async (html) => {
+                        const path = html.find('#bg3-dialog-file-path').val().trim();
+                        await activeNpc.setFlag(MOD_ID, "dialogPath", path);
+                        ui.notifications.info(`Dialog-Pfad für ${activeNpc.name} gespeichert!`);
+                    }
+                },
+                cancel: {
+                    label: "Schließen"
+                }
+            },
+            render: (html) => {
+                html.find('#bg3-editor-npc-select').change((ev) => {
+                    d.close();
+                    this.showNPCDialogEditor(ev.target.value);
+                });
+
+                html.find('#bg3-browse-dialog').click(() => {
+                    new FilePicker({
+                        type: "json",
+                        current: html.find('#bg3-dialog-file-path').val(),
+                        callback: (path) => {
+                            html.find('#bg3-dialog-file-path').val(path);
+                        }
+                    }).render(true);
+                });
+            }
+        });
+
+        d.render(true);
     }
 
     static async getOrCreateRelationship(npcName) {
@@ -176,12 +309,32 @@ class BG3DialogueSystem {
 
         const npc = game.actors.get(npcId);
         const user = game.users.get(initiatorUserId);
-        
-        let rawContent = npc.system.details.biography.value || "";
-        const rawJson = rawContent.replace(/^(<p>|<div>)+/i, '').replace(/(<\/p>|<\/div>)+$/i, '').trim();
+        let fullTree = null;
+
+        // 1. Externe Dialogdatei laden
+        const externalPath = npc.getFlag(MOD_ID, "dialogPath");
+        if (externalPath) {
+            try {
+                const response = await fetch(externalPath);
+                if (!response.ok) throw new Error(`Datei nicht erreichbar (${response.status})`);
+                fullTree = await response.json();
+            } catch (err) {
+                return ui.notifications.error(`Fehler beim Laden der Dialogdatei: ${err.message}`);
+            }
+        }
+
+        // 2. Fallback: Biografie auslesen
+        if (!fullTree) {
+            let rawContent = npc.system.details.biography.value || "";
+            const rawJson = rawContent.replace(/^(<p>|<div>)+/i, '').replace(/(<\/p>|<\/div>)+$/i, '').trim();
+            try {
+                fullTree = JSON.parse(rawJson);
+            } catch (e) {
+                return ui.notifications.error("Keine gültige Dialog-JSON im Dateipfad oder in der Biografie gefunden.");
+            }
+        }
         
         try {
-            const fullTree = JSON.parse(rawJson);
             const relData = await this.getOrCreateRelationship(npc.name);
             const activeUsers = game.users.filter(u => participantIds.includes(u.id) || u.isGM);
             
@@ -194,6 +347,16 @@ class BG3DialogueSystem {
                 currentNodeKey: "startNode",
                 history: [`<b>${npc.name}:</b> ${fullTree.startNode.text}`] 
             };
+
+            // Audio für Startknoten anstoßen
+            if (fullTree.startNode?.audio) {
+                BG3AudioController.playVoice(fullTree.startNode.audio);
+                game.socket.emit(`module.${MOD_ID}`, {
+                    type: "playVoice",
+                    audioSrc: fullTree.startNode.audio,
+                    userIds: participantIds
+                });
+            }
 
             activeUsers.forEach(u => {
                 const isInitiator = u.id === initiatorUserId;
@@ -212,7 +375,7 @@ class BG3DialogueSystem {
                     });
                 }
             });
-        } catch (e) { ui.notifications.error("JSON fehlerhaft. Überprüfe die NSC-Biografie."); }
+        } catch (e) { ui.notifications.error("Unerwarteter Fehler beim Gesprächsstart."); }
     }
 
     static processVote(data) {
@@ -279,6 +442,18 @@ class BG3DialogueSystem {
         
         game.socket.emit(`module.${MOD_ID}`, { type: "syncNode", npcId: data.npcId, nextNode: data.nextKey });
 
+        // Synchrones Audio beim Knotenwechsel abspielen
+        if (nextNode?.audio) {
+            BG3AudioController.playVoice(nextNode.audio);
+            game.socket.emit(`module.${MOD_ID}`, {
+                type: "playVoice",
+                audioSrc: nextNode.audio,
+                userIds: session.participantIds
+            });
+        } else {
+            BG3AudioController.stopVoice();
+        }
+
         if (!data.nextKey) {
             this.endConversation(data.npcId);
             game.socket.emit(`module.${MOD_ID}`, { type: "closeAll", npcId: data.npcId });
@@ -300,6 +475,7 @@ class BG3DialogueSystem {
         const session = this.activeSessions[npcId];
         if (!session) return;
 
+        BG3AudioController.stopVoice();
         const participantIds = session.participantIds || [];
         
         const pcActorIds = [];
@@ -351,6 +527,7 @@ class BG3DialogueSystem {
         const session = this.activeSessions[npcId];
         if (!session) return;
         
+        BG3AudioController.stopVoice();
         delete this.activeSessions[npcId];
         
         const logTitle = `${game.actors.get(npcId).name} & ${session.pcName}`;
@@ -400,6 +577,7 @@ class BG3DialogueWindow extends Application {
     }
 
     async close(options) {
+        BG3AudioController.stopVoice();
         if (this.isInitiator) dispatchSystemEvent({ type: "closeObserver", npcId: this.npc.id });
         return super.close(options);
     }
@@ -422,7 +600,6 @@ class BG3DialogueWindow extends Application {
 
     async _handleReactiveInsight(node) {
         if (node.reactive_check && this.insightResults[this.currentNodeKey] === undefined) {
-            // V14 FIX: Zurück auf reinen String für Formel
             let roll = await new Roll("1d20").evaluate();
             let d20 = roll.total;
             const skillId = node.reactive_check.skill;
@@ -566,18 +743,15 @@ class BG3DialogueWindow extends Application {
         const opt = this.fullTree[this.currentNodeKey].options[optIndex];
         const skillId = overrideSkill || opt.check;
         
-        // V14 FIX: Zurück auf reinen String für Formel
         let roll = await new Roll("1d20").evaluate();
         let d20 = roll.total;
         
-        // Halblingsglück
         if (d20 === 1 && this._isHalfling(rollerPc)) {
             ui.notifications.info("🍀 Halblingsglück!");
             roll = await new Roll("1d20").evaluate();
             d20 = roll.total;
         }
 
-        // Verlässliches Talent (Reliable Talent)
         const hasReliableTalent = rollerPc.items.some(i => i.name.toLowerCase().includes("reliable talent") || i.name.toLowerCase().includes("verlässliches talent"));
         const isProficient = rollerPc.system.skills[skillId]?.value >= 1;
 
@@ -592,7 +766,6 @@ class BG3DialogueWindow extends Application {
 
         await roll.toMessage({ speaker: ChatMessage.getSpeaker({ actor: rollerPc }), flavor: `Gesprächsprobe: ${skillLabel} (SG ${finalDC})` });
 
-        // Inspiration
         if (total < finalDC && rollerPc.system.attributes.inspiration) {
             const useInsp = await new Promise(resolve => {
                 new Dialog({
