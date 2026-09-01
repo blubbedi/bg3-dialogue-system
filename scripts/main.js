@@ -2,62 +2,63 @@ const MOD_ID = 'bg3-dialogue-system';
 
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
-// Zentraler Sound-Controller mit robuster Offset-Ansteuerung
+// Zentraler Sound-Controller mit sofortigem Stop und persistentem Player
 class BG3AudioController {
-    static currentAudio = null;
+    static audioInstance = null;
     static stopTimeout = null;
+    static currentSrc = null;
 
     static playVoice(src, startTime = 0, endTime = null) {
         if (!src) return;
+
+        // 1. Laufenden Timer und vorheriges Audio SOFORT stoppen
         this.stopVoice();
 
-        try {
-            const audio = new Audio(src);
-            audio.volume = game.settings.get("core", "globalInterfaceVolume") ?? 0.8;
-            this.currentAudio = audio;
+        const startSec = Math.max(0, Number(startTime) || 0);
+        const endSec = (endTime !== null && endTime !== undefined) ? Number(endTime) : null;
+        const volume = game.settings.get("core", "globalInterfaceVolume") ?? 0.8;
 
-            const startSec = Number(startTime) || 0;
-            const endSec = (endTime !== null && endTime !== undefined) ? Number(endTime) : null;
+        // 2. Bestehendes Audio-Element wiederverwenden oder neu anlegen
+        if (!this.audioInstance) {
+            this.audioInstance = new Audio();
+        }
 
-            let hasStarted = false;
+        const audio = this.audioInstance;
+        audio.volume = volume;
 
-            const startPlayback = () => {
-                if (hasStarted || BG3AudioController.currentAudio !== audio) return;
-                hasStarted = true;
+        const executeSeekAndPlay = () => {
+            try {
+                audio.currentTime = startSec;
+            } catch (err) {
+                log(`Seek fehlgeschlagen: ${err}`);
+            }
 
-                try {
+            audio.play().then(() => {
+                // Präzisionskorrektur falls der Browser leicht gedriftet ist
+                if (Math.abs(audio.currentTime - startSec) > 0.3) {
                     audio.currentTime = startSec;
-                } catch (err) {
-                    log(`Konnte currentTime nicht setzen: ${err}`);
                 }
 
-                audio.play().then(() => {
-                    // Falls der Browser currentTime beim play() zurückgesetzt hat:
-                    if (Math.abs(audio.currentTime - startSec) > 0.5) {
-                        audio.currentTime = startSec;
-                    }
+                // Stop-Timer für den aktuellen Abschnitt setzen
+                if (endSec && endSec > startSec) {
+                    const durationMs = (endSec - startSec) * 1000;
+                    this.stopTimeout = setTimeout(() => {
+                        this.stopVoice();
+                    }, durationMs);
+                }
+            }).catch(err => {
+                log(`Wiedergabe blockiert: ${err}`);
+            });
+        };
 
-                    if (endSec && endSec > startSec) {
-                        const durationMs = (endSec - startSec) * 1000;
-                        BG3AudioController.stopTimeout = setTimeout(() => {
-                            if (BG3AudioController.currentAudio === audio) {
-                                BG3AudioController.stopVoice();
-                            }
-                        }, durationMs);
-                    }
-                }).catch(err => {
-                    log(`Wiedergabe blockiert: ${err}`);
-                });
-            };
-
-            if (audio.readyState >= 3) {
-                startPlayback();
-            } else {
-                audio.addEventListener("canplay", startPlayback, { once: true });
-                audio.load();
-            }
-        } catch (e) {
-            log(`Audiofehler beim Abspielen von ${src}: ${e}`);
+        // 3. Wenn dieselbe Datei bereits geladen ist: Sofort springen ohne neu zu puffern
+        if (this.currentSrc === src && audio.readyState >= 2) {
+            executeSeekAndPlay();
+        } else {
+            this.currentSrc = src;
+            audio.src = src;
+            audio.addEventListener("loadedmetadata", executeSeekAndPlay, { once: true });
+            audio.load();
         }
     }
 
@@ -66,12 +67,8 @@ class BG3AudioController {
             clearTimeout(this.stopTimeout);
             this.stopTimeout = null;
         }
-        if (this.currentAudio) {
-            try { 
-                this.currentAudio.pause(); 
-                this.currentAudio.currentTime = 0;
-            } catch(e) {}
-            this.currentAudio = null;
+        if (this.audioInstance) {
+            this.audioInstance.pause();
         }
     }
 }
