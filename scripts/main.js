@@ -2,31 +2,65 @@ const MOD_ID = 'bg3-dialogue-system';
 
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
-// Zentraler Sound-Controller für Sprachausgabe
+// Zentraler Sound-Controller für Sprachausgabe mit Timecode-Unterstützung
 class BG3AudioController {
-    static currentSound = null;
+    static currentAudio = null;
+    static stopTimeout = null;
 
-    static playVoice(src) {
+    static playVoice(src, startTime = 0, endTime = null) {
         if (!src) return;
         this.stopVoice();
+
         try {
-            foundry.audio.AudioHelper.play({
-                src: src,
-                volume: game.settings.get("core", "globalInterfaceVolume") || 0.8,
-                autoplay: true,
-                loop: false
-            }, false).then(sound => {
-                this.currentSound = sound;
-            });
+            const audio = new Audio(src);
+            audio.volume = game.settings.get("core", "globalInterfaceVolume") ?? 0.8;
+            this.currentAudio = audio;
+
+            const startSec = Number(startTime) || 0;
+            const endSec = endTime !== null && endTime !== undefined ? Number(endTime) : null;
+
+            const onMetadataLoaded = () => {
+                try {
+                    audio.currentTime = startSec;
+                } catch (err) {
+                    log(`Konnte currentTime nicht setzen: ${err}`);
+                }
+                
+                audio.play().catch(err => {
+                    log(`Audio-Wiedergabe blockiert oder fehlgeschlagen: ${err}`);
+                });
+
+                if (endSec && endSec > startSec) {
+                    const durationMs = (endSec - startSec) * 1000;
+                    this.stopTimeout = setTimeout(() => {
+                        if (this.currentAudio === audio) {
+                            this.stopVoice();
+                        }
+                    }, durationMs);
+                }
+            };
+
+            if (audio.readyState >= 1) {
+                onMetadataLoaded();
+            } else {
+                audio.addEventListener("loadedmetadata", onMetadataLoaded, { once: true });
+            }
         } catch (e) {
             log(`Audiofehler beim Abspielen von ${src}: ${e}`);
         }
     }
 
     static stopVoice() {
-        if (this.currentSound) {
-            try { this.currentSound.stop(); } catch(e) {}
-            this.currentSound = null;
+        if (this.stopTimeout) {
+            clearTimeout(this.stopTimeout);
+            this.stopTimeout = null;
+        }
+        if (this.currentAudio) {
+            try { 
+                this.currentAudio.pause(); 
+                this.currentAudio.currentTime = 0;
+            } catch(e) {}
+            this.currentAudio = null;
         }
     }
 }
@@ -69,7 +103,7 @@ Hooks.once('ready', async () => {
             }
         } else if (data.type === "playVoice") {
             if (data.userIds && data.userIds.includes(game.user.id)) {
-                BG3AudioController.playVoice(data.audioSrc);
+                BG3AudioController.playVoice(data.audioSrc, data.audioStart, data.audioEnd);
             }
         } else if (data.type === "syncVotes") {
             windows.forEach(w => { w.votes = data.votes; w.render(true); });
@@ -126,7 +160,6 @@ class BG3DialogueSystem {
         if (!game.folders.find(f => f.name === "Logs" && f.folder?.id === parent.id)) await Folder.create({ name: "Logs", type: "JournalEntry", folder: parent.id });
     }
 
-    // Haupt-Auswahlmenü
     static showMainMenu() {
         new Dialog({
             title: "BG3 Dialog-System",
@@ -151,7 +184,6 @@ class BG3DialogueSystem {
         }).render(true);
     }
 
-    // NSC-Dialog-Editor mit Dateiwähler
     static showNPCDialogEditor(selectedNpcId = null) {
         const folderName = game.settings.get(MOD_ID, 'npcFolder');
         const folder = game.folders.find(f => f.type === "Actor" && f.name === folderName);
@@ -311,7 +343,6 @@ class BG3DialogueSystem {
         const user = game.users.get(initiatorUserId);
         let fullTree = null;
 
-        // 1. Externe Dialogdatei laden
         const externalPath = npc.getFlag(MOD_ID, "dialogPath");
         if (externalPath) {
             try {
@@ -323,7 +354,6 @@ class BG3DialogueSystem {
             }
         }
 
-        // 2. Fallback: Biografie auslesen
         if (!fullTree) {
             let rawContent = npc.system.details.biography.value || "";
             const rawJson = rawContent.replace(/^(<p>|<div>)+/i, '').replace(/(<\/p>|<\/div>)+$/i, '').trim();
@@ -348,12 +378,17 @@ class BG3DialogueSystem {
                 history: [`<b>${npc.name}:</b> ${fullTree.startNode.text}`] 
             };
 
-            // Audio für Startknoten anstoßen
+            // Startknoten-Audio mit audioStart und audioEnd anstoßen
             if (fullTree.startNode?.audio) {
-                BG3AudioController.playVoice(fullTree.startNode.audio);
+                const aStart = fullTree.startNode.audioStart || 0;
+                const aEnd = fullTree.startNode.audioEnd || null;
+
+                BG3AudioController.playVoice(fullTree.startNode.audio, aStart, aEnd);
                 game.socket.emit(`module.${MOD_ID}`, {
                     type: "playVoice",
                     audioSrc: fullTree.startNode.audio,
+                    audioStart: aStart,
+                    audioEnd: aEnd,
                     userIds: participantIds
                 });
             }
@@ -442,12 +477,17 @@ class BG3DialogueSystem {
         
         game.socket.emit(`module.${MOD_ID}`, { type: "syncNode", npcId: data.npcId, nextNode: data.nextKey });
 
-        // Synchrones Audio beim Knotenwechsel abspielen
+        // Synchrones Audio beim Knotenwechsel abspielen (mit Timecodes)
         if (nextNode?.audio) {
-            BG3AudioController.playVoice(nextNode.audio);
+            const aStart = nextNode.audioStart || 0;
+            const aEnd = nextNode.audioEnd || null;
+
+            BG3AudioController.playVoice(nextNode.audio, aStart, aEnd);
             game.socket.emit(`module.${MOD_ID}`, {
                 type: "playVoice",
                 audioSrc: nextNode.audio,
+                audioStart: aStart,
+                audioEnd: aEnd,
                 userIds: session.participantIds
             });
         } else {
