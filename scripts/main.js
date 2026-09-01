@@ -2,7 +2,7 @@ const MOD_ID = 'bg3-dialogue-system';
 
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
-// Zentraler Sound-Controller für Sprachausgabe mit Timecode-Unterstützung
+// Zentraler Sound-Controller mit robuster Offset-Ansteuerung
 class BG3AudioController {
     static currentAudio = null;
     static stopTimeout = null;
@@ -17,33 +17,44 @@ class BG3AudioController {
             this.currentAudio = audio;
 
             const startSec = Number(startTime) || 0;
-            const endSec = endTime !== null && endTime !== undefined ? Number(endTime) : null;
+            const endSec = (endTime !== null && endTime !== undefined) ? Number(endTime) : null;
 
-            const onMetadataLoaded = () => {
+            let hasStarted = false;
+
+            const startPlayback = () => {
+                if (hasStarted || BG3AudioController.currentAudio !== audio) return;
+                hasStarted = true;
+
                 try {
                     audio.currentTime = startSec;
                 } catch (err) {
                     log(`Konnte currentTime nicht setzen: ${err}`);
                 }
-                
-                audio.play().catch(err => {
-                    log(`Audio-Wiedergabe blockiert oder fehlgeschlagen: ${err}`);
-                });
 
-                if (endSec && endSec > startSec) {
-                    const durationMs = (endSec - startSec) * 1000;
-                    this.stopTimeout = setTimeout(() => {
-                        if (this.currentAudio === audio) {
-                            this.stopVoice();
-                        }
-                    }, durationMs);
-                }
+                audio.play().then(() => {
+                    // Falls der Browser currentTime beim play() zurückgesetzt hat:
+                    if (Math.abs(audio.currentTime - startSec) > 0.5) {
+                        audio.currentTime = startSec;
+                    }
+
+                    if (endSec && endSec > startSec) {
+                        const durationMs = (endSec - startSec) * 1000;
+                        BG3AudioController.stopTimeout = setTimeout(() => {
+                            if (BG3AudioController.currentAudio === audio) {
+                                BG3AudioController.stopVoice();
+                            }
+                        }, durationMs);
+                    }
+                }).catch(err => {
+                    log(`Wiedergabe blockiert: ${err}`);
+                });
             };
 
-            if (audio.readyState >= 1) {
-                onMetadataLoaded();
+            if (audio.readyState >= 3) {
+                startPlayback();
             } else {
-                audio.addEventListener("loadedmetadata", onMetadataLoaded, { once: true });
+                audio.addEventListener("canplay", startPlayback, { once: true });
+                audio.load();
             }
         } catch (e) {
             log(`Audiofehler beim Abspielen von ${src}: ${e}`);
@@ -378,7 +389,7 @@ class BG3DialogueSystem {
                 history: [`<b>${npc.name}:</b> ${fullTree.startNode.text}`] 
             };
 
-            // Startknoten-Audio mit audioStart und audioEnd anstoßen
+            // Startknoten-Audio mit audioStart und audioEnd abspielen
             if (fullTree.startNode?.audio) {
                 const aStart = fullTree.startNode.audioStart || 0;
                 const aEnd = fullTree.startNode.audioEnd || null;
