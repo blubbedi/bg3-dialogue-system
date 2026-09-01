@@ -422,9 +422,10 @@ class BG3DialogueSystem {
         const session = this.activeSessions[data.npcId];
         if (!session) return;
 
-        // Gewählte Option registrieren
+        // Gewählte Option & besuchten Zielknoten registrieren
         if (data.optIndex !== undefined && data.optIndex !== null) {
             session.chosenOptions.add(`${session.currentNodeKey}_${data.optIndex}`);
+            if (data.nextKey) session.chosenOptions.add(`node_${data.nextKey}`);
         }
 
         const nextNode = session.fullTree[data.nextKey];
@@ -664,7 +665,8 @@ class BG3DialogueWindow extends Application {
                 .filter(([uid, idx]) => idx === i)
                 .map(([uid, idx]) => ({ name: game.users.get(uid)?.name, img: game.users.get(uid)?.character?.img }));
             
-            const isVisited = this.chosenOptions.has(`${this.currentNodeKey}_${i}`);
+            const isVisited = this.chosenOptions.has(`${this.currentNodeKey}_${i}`) || 
+                              (o.nextNode && this.chosenOptions.has(`node_${o.nextNode}`));
 
             return { 
                 ...o, 
