@@ -66,6 +66,26 @@
 }
 .dialog-option.disabled { opacity: 0.7; cursor: not-allowed; }
 
+/* Bereits gewählte / besuchte Dialogoptionen (Ausgegraut) */
+.dialog-option.visited {
+    background: rgba(0, 0, 0, 0.02) !important;
+    border-color: rgba(0, 0, 0, 0.08) !important;
+}
+.dialog-option.visited,
+.dialog-option.visited span,
+.dialog-option.visited * {
+    color: #777777 !important;
+}
+.dialog-option.visited:hover {
+    background: rgba(193, 163, 91, 0.15) !important;
+    border-color: rgba(193, 163, 91, 0.5) !important;
+}
+.dialog-option.visited:hover,
+.dialog-option.visited:hover span,
+.dialog-option.visited:hover * {
+    color: #333333 !important;
+}
+
 .voter-portraits { display: flex; gap: 4px; }
 .voter-img { 
     width: 24px; height: 24px; border-radius: 50%; border: 1px solid #c1a35b; 

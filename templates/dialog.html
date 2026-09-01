@@ -40,7 +40,7 @@
     <div class="bg3-footer">
         <ul class="bg3-options-list">
             {{#each options as |opt i|}}
-                <li class="dialog-option {{#if opt.votedByMe}}voted{{/if}} {{#if ../isObserver}}disabled{{/if}}" data-index="{{i}}">
+                <li class="dialog-option {{#if opt.isVisited}}visited{{/if}} {{#if opt.votedByMe}}voted{{/if}} {{#if ../isObserver}}disabled{{/if}}" data-index="{{i}}">
                     <span><span class="opt-number">{{add i 1}}.</span> {{opt.displayHtml}}</span>
                     <div class="voter-portraits">
                         {{#each opt.voters}}

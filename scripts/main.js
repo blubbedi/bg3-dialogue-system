@@ -67,7 +67,8 @@ Hooks.once('ready', async () => {
             if (game.user.id === data.receiverId || data.broadcast) {
                 new BG3DialogueWindow(
                     data.npcId, data.pcId, data.fullTree, data.startNode, false, 
-                    data.relScore, data.relTags, data.isInitiator, data.participantIds
+                    data.relScore, data.relTags, data.isInitiator, data.participantIds,
+                    data.chosenOptions || []
                 ).render(true);
             }
         } else if (data.type === "playVoice") {
@@ -82,6 +83,7 @@ Hooks.once('ready', async () => {
                 w.votes = {}; 
                 w.isSpotlight = false;
                 w.showDelegation = false;
+                if (data.chosenOptions) w.chosenOptions = new Set(data.chosenOptions);
                 if (data.nextNode) w.render(true); 
                 else w.close();
             });
@@ -344,6 +346,7 @@ class BG3DialogueSystem {
                 votes: {}, 
                 fullTree, 
                 currentNodeKey: "startNode",
+                chosenOptions: new Set(),
                 history: [`<b>${npc.name}:</b> ${fullTree.startNode.text}`] 
             };
 
@@ -364,13 +367,15 @@ class BG3DialogueSystem {
                 if (u.id === game.user.id) {
                     new BG3DialogueWindow(
                         npcId, pcId, fullTree, "startNode", false, 
-                        relData.score, relData.tags, isInitiator, participantIds
+                        relData.score, relData.tags, isInitiator, participantIds,
+                        Array.from(this.activeSessions[npcId].chosenOptions)
                     ).render(true);
                 } else {
                     game.socket.emit(`module.${MOD_ID}`, { 
                         type: "showDialog", npcId, pcId: pcId, receiverId: u.id, 
                         fullTree, startNode: "startNode", relScore: relData.score, 
-                        relTags: relData.tags, isInitiator, participantIds 
+                        relTags: relData.tags, isInitiator, participantIds,
+                        chosenOptions: Array.from(this.activeSessions[npcId].chosenOptions)
                     });
                 }
             });
@@ -410,12 +415,17 @@ class BG3DialogueSystem {
         const resultColor = data.success ? "#4db8ff" : "#ff4d4d";
         const resTxt = `<br><span style="color: ${resultColor}; font-size: 0.85em;">↳ [Gewürfelt: ${data.total} (W20: ${data.d20}) vs SG ${data.finalDC} ➔ <b>${data.success ? 'ERFOLG' : 'FEHLSCHLAG'}</b>]</span>`;
 
-        this.syncNodeAcrossClients({ npcId: data.npcId, speaker: data.speaker, text: opt.text + resTxt, nextKey: nextKey });
+        this.syncNodeAcrossClients({ npcId: data.npcId, speaker: data.speaker, text: opt.text + resTxt, nextKey: nextKey, optIndex: data.optIndex });
     }
 
     static syncNodeAcrossClients(data) {
         const session = this.activeSessions[data.npcId];
         if (!session) return;
+
+        // Gewählte Option registrieren
+        if (data.optIndex !== undefined && data.optIndex !== null) {
+            session.chosenOptions.add(`${session.currentNodeKey}_${data.optIndex}`);
+        }
 
         const nextNode = session.fullTree[data.nextKey];
         let systemLog = "";
@@ -439,7 +449,12 @@ class BG3DialogueSystem {
         session.currentNodeKey = data.nextKey;
         session.votes = {};
         
-        game.socket.emit(`module.${MOD_ID}`, { type: "syncNode", npcId: data.npcId, nextNode: data.nextKey });
+        game.socket.emit(`module.${MOD_ID}`, { 
+            type: "syncNode", 
+            npcId: data.npcId, 
+            nextNode: data.nextKey,
+            chosenOptions: Array.from(session.chosenOptions)
+        });
 
         // Synchrones Audio für den neuen Knoten starten
         if (nextNode?.audio) {
@@ -550,7 +565,7 @@ class BG3DialogueSystem {
 }
 
 class BG3DialogueWindow extends Application {
-    constructor(npcId, pcId, fullTree, currentNodeKey, isObserver = false, relScore = 0, relTags = [], isInitiator = false, participantIds = []) {
+    constructor(npcId, pcId, fullTree, currentNodeKey, isObserver = false, relScore = 0, relTags = [], isInitiator = false, participantIds = [], chosenOptions = []) {
         super();
         this.npc = game.actors.get(npcId);
         this.pc = pcId ? game.actors.get(pcId) : null;
@@ -561,6 +576,7 @@ class BG3DialogueWindow extends Application {
         this.relTags = relTags;
         this.isInitiator = isInitiator;
         this.participantIds = participantIds;
+        this.chosenOptions = new Set(chosenOptions);
         this.votes = {}; 
         this.isSpotlight = false;
         this.showDelegation = false;
@@ -647,7 +663,16 @@ class BG3DialogueWindow extends Application {
             const votersForThis = Object.entries(this.votes)
                 .filter(([uid, idx]) => idx === i)
                 .map(([uid, idx]) => ({ name: game.users.get(uid)?.name, img: game.users.get(uid)?.character?.img }));
-            return { ...o, displayHtml: txt, voters: votersForThis, votedByMe: this.votes[game.user.id] === i };
+            
+            const isVisited = this.chosenOptions.has(`${this.currentNodeKey}_${i}`);
+
+            return { 
+                ...o, 
+                displayHtml: txt, 
+                voters: votersForThis, 
+                votedByMe: this.votes[game.user.id] === i,
+                isVisited: isVisited
+            };
         });
 
         let skillLabel = "";
@@ -696,7 +721,14 @@ class BG3DialogueWindow extends Application {
                     this.pendingOptIndex = idx;
                     this.render(true);
                 } else {
-                    dispatchSystemEvent({ type: "syncNodeRequest", npcId: this.npc.id, speaker: this.pc?.name || "Gruppe", text: opt.text, nextKey: opt.nextNode });
+                    dispatchSystemEvent({ 
+                        type: "syncNodeRequest", 
+                        npcId: this.npc.id, 
+                        speaker: this.pc?.name || "Gruppe", 
+                        text: opt.text, 
+                        nextKey: opt.nextNode,
+                        optIndex: idx
+                    });
                 }
             }
         });
