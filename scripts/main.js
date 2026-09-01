@@ -61,7 +61,7 @@ Hooks.once('ready', async () => {
     if (game.user.isGM) await BG3DialogueSystem.checkAndCreateDefaults();
 
     game.socket.on(`module.${MOD_ID}`, async data => {
-        const windows = Object.values(ui.windows).filter(a => a instanceof BG3DialogueWindow && a.npc.id === data.npcId);
+        const windows = Object.values(ui.windows).filter(a => a instanceof BG3DialogueWindow && (a.npc?.id === data.npcId || a.npcId === data.npcId));
         
         if (data.type === "showDialog") {
             if (game.user.id === data.receiverId || data.broadcast) {
@@ -450,11 +450,24 @@ class BG3DialogueSystem {
         session.currentNodeKey = data.nextKey;
         session.votes = {};
         
+        // 1. An alle anderen Clients senden
         game.socket.emit(`module.${MOD_ID}`, { 
             type: "syncNode", 
             npcId: data.npcId, 
             nextNode: data.nextKey,
             chosenOptions: Array.from(session.chosenOptions)
+        });
+
+        // 2. Lokal beim Spielleiter aktualisieren
+        const localWindows = Object.values(ui.windows).filter(a => a instanceof BG3DialogueWindow && (a.npc?.id === data.npcId || a.npcId === data.npcId));
+        localWindows.forEach(w => {
+            w.currentNodeKey = data.nextKey;
+            w.votes = {};
+            w.isSpotlight = false;
+            w.showDelegation = false;
+            w.chosenOptions = new Set(session.chosenOptions);
+            if (data.nextKey) w.render(true);
+            else w.close();
         });
 
         // Synchrones Audio für den neuen Knoten starten
@@ -568,6 +581,7 @@ class BG3DialogueSystem {
 class BG3DialogueWindow extends Application {
     constructor(npcId, pcId, fullTree, currentNodeKey, isObserver = false, relScore = 0, relTags = [], isInitiator = false, participantIds = [], chosenOptions = []) {
         super();
+        this.npcId = npcId;
         this.npc = game.actors.get(npcId);
         this.pc = pcId ? game.actors.get(pcId) : null;
         this.fullTree = fullTree;
@@ -594,7 +608,7 @@ class BG3DialogueWindow extends Application {
 
     async close(options) {
         BG3AudioController.stopVoice();
-        if (this.isInitiator) dispatchSystemEvent({ type: "closeObserver", npcId: this.npc.id });
+        if (this.isInitiator) dispatchSystemEvent({ type: "closeObserver", npcId: this.npcId });
         return super.close(options);
     }
 
@@ -606,7 +620,7 @@ class BG3DialogueWindow extends Application {
                 if (node.ship_mod) this.relScore += node.ship_mod;
                 if (node.ship_tag && !this.relTags.includes(node.ship_tag)) this.relTags.push(node.ship_tag);
                 if (node.ship_mod || node.ship_tag) {
-                    dispatchSystemEvent({ type: "updateRelationship", npcId: this.npc.id, mod: node.ship_mod || 0, tag: node.ship_tag });
+                    dispatchSystemEvent({ type: "updateRelationship", npcId: this.npcId, mod: node.ship_mod || 0, tag: node.ship_tag });
                 }
                 await this._handleReactiveInsight(node);
             }
@@ -638,7 +652,7 @@ class BG3DialogueWindow extends Application {
             this.insightResults[this.currentNodeKey] = success;
             
             if (success && node.reactive_check.ship_tag) {
-                dispatchSystemEvent({ type: "updateRelationship", npcId: this.npc.id, mod: 0, tag: node.reactive_check.ship_tag });
+                dispatchSystemEvent({ type: "updateRelationship", npcId: this.npcId, mod: 0, tag: node.reactive_check.ship_tag });
                 if (!this.relTags.includes(node.reactive_check.ship_tag)) this.relTags.push(node.reactive_check.ship_tag);
             }
         }
@@ -683,7 +697,7 @@ class BG3DialogueWindow extends Application {
         }
 
         return {
-            npcName: this.npc.name, npcImg: this.npc.img, pcImg: this.pc?.img, pcName: this.pc?.name, text: node?.text,
+            npcName: this.npc ? this.npc.name : "NSC", npcImg: this.npc ? this.npc.img : "", pcImg: this.pc?.img, pcName: this.pc?.name, text: node?.text,
             options, isInitiator: this.isInitiator, isSpotlight: this.isSpotlight, spotlightSkill: skillLabel,
             showDelegation: this.showDelegation, potentialDelegates: this.showDelegation ? this._getPotentialDelegates() : [],
             relationshipStatus: { class: this.relScore >= 5 ? "friendly" : (this.relScore <= -5 ? "hostile" : "neutral") },
@@ -710,11 +724,11 @@ class BG3DialogueWindow extends Application {
             const opt = this.fullTree[this.currentNodeKey].options[idx];
 
             if (!this.isInitiator) {
-                dispatchSystemEvent({ type: "processVote", npcId: this.npc.id, userId: game.user.id, optionIndex: idx });
+                dispatchSystemEvent({ type: "processVote", npcId: this.npcId, userId: game.user.id, optionIndex: idx });
             } else {
                 if (opt.action === "combat") {
-                    dispatchSystemEvent({ type: "choiceMade", npcId: this.npc.id, speaker: this.pc?.name || "Gruppe", text: opt.text, systemLog: "[Kampf initiiert]", nextNodeText: null });
-                    dispatchSystemEvent({ type: "startCombat", npcId: this.npc.id, speaker: this.pc?.name || "Gruppe" });
+                    dispatchSystemEvent({ type: "choiceMade", npcId: this.npcId, speaker: this.pc?.name || "Gruppe", text: opt.text, systemLog: "[Kampf initiiert]", nextNodeText: null });
+                    dispatchSystemEvent({ type: "startCombat", npcId: this.npcId, speaker: this.pc?.name || "Gruppe" });
                     return;
                 }
 
@@ -725,7 +739,7 @@ class BG3DialogueWindow extends Application {
                 } else {
                     dispatchSystemEvent({ 
                         type: "syncNodeRequest", 
-                        npcId: this.npc.id, 
+                        npcId: this.npcId, 
                         speaker: this.pc?.name || "Gruppe", 
                         text: opt.text, 
                         nextKey: opt.nextNode,
@@ -750,7 +764,7 @@ class BG3DialogueWindow extends Application {
                 await this._rollForCheck(this.pendingOptIndex, finalDC, this.pc);
             } else {
                 dispatchSystemEvent({ 
-                    type: "requestSkillCheck", npcId: this.npc.id, targetActorId, 
+                    type: "requestSkillCheck", npcId: this.npcId, targetActorId, 
                     skill: opt.check, dc: opt.dc, optIndex: this.pendingOptIndex, finalDC: finalDC
                 });
                 this.showDelegation = false;
@@ -768,7 +782,7 @@ class BG3DialogueWindow extends Application {
 
         html.find('.dialog-close-btn').click(ev => {
             if (!this.isInitiator) return;
-            dispatchSystemEvent({ type: "syncNodeRequest", npcId: this.npc.id, speaker: this.pc?.name || game.user.name, text: "<i>*Verlässt das Gespräch*</i>", nextKey: null });
+            dispatchSystemEvent({ type: "syncNodeRequest", npcId: this.npcId, speaker: this.pc?.name || game.user.name, text: "<i>*Verlässt das Gespräch*</i>", nextKey: null });
         });
     }
 
@@ -835,7 +849,7 @@ class BG3DialogueWindow extends Application {
         
         dispatchSystemEvent({ 
             type: "resolveSkillCheck", 
-            npcId: this.npc.id, 
+            npcId: this.npcId, 
             optIndex: optIndex, 
             success: success, 
             total: total, 
