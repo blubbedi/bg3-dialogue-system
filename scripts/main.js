@@ -2,73 +2,34 @@ const MOD_ID = 'bg3-dialogue-system';
 
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
-// Zentraler Sound-Controller mit sofortigem Stop und persistentem Player
+// Zentraler Sound-Controller für einzelne Audios
 class BG3AudioController {
-    static audioInstance = null;
-    static stopTimeout = null;
-    static currentSrc = null;
+    static currentAudio = null;
 
-    static playVoice(src, startTime = 0, endTime = null) {
+    static playVoice(src) {
         if (!src) return;
-
-        // 1. Laufenden Timer und vorheriges Audio SOFORT stoppen
         this.stopVoice();
 
-        const startSec = Math.max(0, Number(startTime) || 0);
-        const endSec = (endTime !== null && endTime !== undefined) ? Number(endTime) : null;
-        const volume = game.settings.get("core", "globalInterfaceVolume") ?? 0.8;
+        try {
+            const audio = new Audio(src);
+            audio.volume = game.settings.get("core", "globalInterfaceVolume") ?? 0.8;
+            this.currentAudio = audio;
 
-        // 2. Bestehendes Audio-Element wiederverwenden oder neu anlegen
-        if (!this.audioInstance) {
-            this.audioInstance = new Audio();
-        }
-
-        const audio = this.audioInstance;
-        audio.volume = volume;
-
-        const executeSeekAndPlay = () => {
-            try {
-                audio.currentTime = startSec;
-            } catch (err) {
-                log(`Seek fehlgeschlagen: ${err}`);
-            }
-
-            audio.play().then(() => {
-                // Präzisionskorrektur falls der Browser leicht gedriftet ist
-                if (Math.abs(audio.currentTime - startSec) > 0.3) {
-                    audio.currentTime = startSec;
-                }
-
-                // Stop-Timer für den aktuellen Abschnitt setzen
-                if (endSec && endSec > startSec) {
-                    const durationMs = (endSec - startSec) * 1000;
-                    this.stopTimeout = setTimeout(() => {
-                        this.stopVoice();
-                    }, durationMs);
-                }
-            }).catch(err => {
-                log(`Wiedergabe blockiert: ${err}`);
+            audio.play().catch(err => {
+                log(`Wiedergabe blockiert oder fehlgeschlagen: ${err}`);
             });
-        };
-
-        // 3. Wenn dieselbe Datei bereits geladen ist: Sofort springen ohne neu zu puffern
-        if (this.currentSrc === src && audio.readyState >= 2) {
-            executeSeekAndPlay();
-        } else {
-            this.currentSrc = src;
-            audio.src = src;
-            audio.addEventListener("loadedmetadata", executeSeekAndPlay, { once: true });
-            audio.load();
+        } catch (e) {
+            log(`Audiofehler beim Abspielen von ${src}: ${e}`);
         }
     }
 
     static stopVoice() {
-        if (this.stopTimeout) {
-            clearTimeout(this.stopTimeout);
-            this.stopTimeout = null;
-        }
-        if (this.audioInstance) {
-            this.audioInstance.pause();
+        if (this.currentAudio) {
+            try {
+                this.currentAudio.pause();
+                this.currentAudio.currentTime = 0;
+            } catch(e) {}
+            this.currentAudio = null;
         }
     }
 }
@@ -111,7 +72,7 @@ Hooks.once('ready', async () => {
             }
         } else if (data.type === "playVoice") {
             if (data.userIds && data.userIds.includes(game.user.id)) {
-                BG3AudioController.playVoice(data.audioSrc, data.audioStart, data.audioEnd);
+                BG3AudioController.playVoice(data.audioSrc);
             }
         } else if (data.type === "syncVotes") {
             windows.forEach(w => { w.votes = data.votes; w.render(true); });
@@ -386,17 +347,12 @@ class BG3DialogueSystem {
                 history: [`<b>${npc.name}:</b> ${fullTree.startNode.text}`] 
             };
 
-            // Startknoten-Audio mit audioStart und audioEnd abspielen
+            // Startknoten-Audio abspielen
             if (fullTree.startNode?.audio) {
-                const aStart = fullTree.startNode.audioStart || 0;
-                const aEnd = fullTree.startNode.audioEnd || null;
-
-                BG3AudioController.playVoice(fullTree.startNode.audio, aStart, aEnd);
+                BG3AudioController.playVoice(fullTree.startNode.audio);
                 game.socket.emit(`module.${MOD_ID}`, {
                     type: "playVoice",
                     audioSrc: fullTree.startNode.audio,
-                    audioStart: aStart,
-                    audioEnd: aEnd,
                     userIds: participantIds
                 });
             }
@@ -485,17 +441,12 @@ class BG3DialogueSystem {
         
         game.socket.emit(`module.${MOD_ID}`, { type: "syncNode", npcId: data.npcId, nextNode: data.nextKey });
 
-        // Synchrones Audio beim Knotenwechsel abspielen (mit Timecodes)
+        // Synchrones Audio für den neuen Knoten starten
         if (nextNode?.audio) {
-            const aStart = nextNode.audioStart || 0;
-            const aEnd = nextNode.audioEnd || null;
-
-            BG3AudioController.playVoice(nextNode.audio, aStart, aEnd);
+            BG3AudioController.playVoice(nextNode.audio);
             game.socket.emit(`module.${MOD_ID}`, {
                 type: "playVoice",
                 audioSrc: nextNode.audio,
-                audioStart: aStart,
-                audioEnd: aEnd,
                 userIds: session.participantIds
             });
         } else {
