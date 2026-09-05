@@ -22,49 +22,62 @@
         <button class="spotlight-btn"><i class="fas fa-dice-d20"></i> JETZT WÜRFELN</button>
     </div>
     {{else}}
-    <div class="bg3-header">
-        <div class="bg3-header-left">
-            <img src="{{npcImg}}" class="bg3-portrait npc-portrait">
-            <div class="header-info">
-                <h2 class="bg3-npc-name">{{npcName}}</h2>
-                <div class="rel-indicator status-{{relationshipStatus.class}}" title="Stimmung"></div>
+    
+    <!-- Linker Flügel: Großes NSC-Porträt & Status -->
+    <aside class="bg3-flank-left">
+        <div class="npc-card">
+            <div class="npc-portrait-container">
+                <img src="{{npcImg}}" class="bg3-portrait npc-portrait-large">
+                <div class="rel-indicator-badge status-{{relationshipStatus.class}}" title="Stimmung"></div>
             </div>
+            <h3 class="bg3-npc-name-large">{{npcName}}</h3>
+        </div>
+    </aside>
+
+    <!-- Zentrum: Die Dialog-Schriftrolle -->
+    <main class="bg3-dialog-center">
+        <div class="bg3-body">
+            <p class="bg3-main-text">{{{text}}}</p>
+            {{#if showInsight}}
+                <div class="bg3-insight-box"><i class="fas fa-eye"></i> <em>{{{insightText}}}</em></div>
+            {{/if}}
         </div>
 
-        <div class="bg3-party-portraits">
+        <div class="bg3-footer">
+            <ul class="bg3-options-list">
+                {{#each options as |opt i|}}
+                    <li class="dialog-option {{#if opt.isVisited}}visited{{/if}} {{#if opt.votedByMe}}voted{{/if}} {{#if ../isObserver}}disabled{{/if}}" data-index="{{i}}">
+                        <span><span class="opt-number">{{add i 1}}.</span> {{opt.displayHtml}}</span>
+                        <div class="voter-portraits">
+                            {{#each opt.voters}}
+                                <img src="{{this.img}}" class="voter-img" title="{{this.name}} hat hierfür gestimmt">
+                            {{/each}}
+                        </div>
+                    </li>
+                {{/each}}
+            </ul>
+            {{#if (not isInitiator)}}
+                <p style="color: #8c733e; text-align: center; margin-top: 15px; font-size: 0.85em;">
+                    <i class="fas fa-info-circle"></i> Du bist Ratgeber. Klicke auf eine Option, um abzustimmen.
+                </p>
+            {{/if}}
+        </div>
+    </main>
+
+    <!-- Rechter Flügel: Vertikale Leiste aller Spieler-Teilnehmer -->
+    <aside class="bg3-flank-right">
+        <div class="party-column">
             {{#each participants}}
-                <div class="party-portrait-wrapper {{#if isSpeaker}}active-speaker{{/if}}" title="{{name}}{{#if isSpeaker}} (Sprecher){{/if}}">
-                    <img src="{{img}}" class="bg3-portrait party-portrait">
+                <div class="party-card {{#if isSpeaker}}active-speaker{{/if}}" title="{{name}}{{#if isSpeaker}} (Sprecher){{/if}}">
+                    <img src="{{img}}" class="bg3-portrait party-portrait-large">
+                    <span class="party-card-name">{{name}}</span>
+                    {{#if isSpeaker}}
+                        <span class="speaker-pill">Sprecher</span>
+                    {{/if}}
                 </div>
             {{/each}}
         </div>
-    </div>
-    
-    <div class="bg3-body">
-        <p class="bg3-main-text">{{{text}}}</p>
-        {{#if showInsight}}
-            <div class="bg3-insight-box"><i class="fas fa-eye"></i> <em>{{{insightText}}}</em></div>
-        {{/if}}
-    </div>
+    </aside>
 
-    <div class="bg3-footer">
-        <ul class="bg3-options-list">
-            {{#each options as |opt i|}}
-                <li class="dialog-option {{#if opt.isVisited}}visited{{/if}} {{#if opt.votedByMe}}voted{{/if}} {{#if ../isObserver}}disabled{{/if}}" data-index="{{i}}">
-                    <span><span class="opt-number">{{add i 1}}.</span> {{opt.displayHtml}}</span>
-                    <div class="voter-portraits">
-                        {{#each opt.voters}}
-                            <img src="{{this.img}}" class="voter-img" title="{{this.name}} hat hierfür gestimmt">
-                        {{/each}}
-                    </div>
-                </li>
-            {{/each}}
-        </ul>
-        {{#if (not isInitiator)}}
-            <p style="color: #c1a35b; text-align: center; margin-top: 15px; font-size: 0.8em;">
-                <i class="fas fa-info-circle"></i> Du bist Ratgeber. Klicke auf eine Option, um abzustimmen.
-            </p>
-        {{/if}}
-    </div>
     {{/if}}
 </div>

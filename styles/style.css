@@ -1,76 +1,104 @@
+/* Hauptfenster-Container transparent schalten */
 #bg3-dialog-ui {
-    background: rgba(240, 240, 240, 0.98) !important;
-    color: #000000 !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+#bg3-dialog-ui .window-content {
+    background: transparent !important;
+    padding: 0 !important;
+    overflow: visible !important;
+}
+
+/* 3-Spalten-Flexbox-Layout */
+.bg3-dialog-wrapper {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 20px;
+    padding: 10px;
+    position: relative;
+}
+
+/* --- Linke Flanke: NSC-Bereich --- */
+.bg3-flank-left {
+    width: 170px;
+    flex-shrink: 0;
+}
+
+.npc-card {
+    background: rgba(240, 240, 240, 0.98);
     border: 2px solid #c1a35b;
     border-radius: 12px;
-    box-shadow: 0 0 25px rgba(0,0,0,0.8);
+    padding: 15px 10px;
+    text-align: center;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.6);
 }
 
-.bg3-dialog-wrapper { padding: 20px; position: relative; }
+.npc-portrait-container {
+    position: relative;
+    width: 130px;
+    height: 130px;
+    margin: 0 auto 10px auto;
+}
 
-/* Header & Body */
-.bg3-header { 
-    display: flex; 
-    align-items: center; 
-    justify-content: space-between; 
-    border-bottom: 1px solid #c1a35b; 
-    padding-bottom: 15px; 
+.npc-portrait-large {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    border: 3px solid #c1a35b;
+    object-fit: cover;
+    display: block;
 }
-.bg3-header-left { 
-    display: flex; 
-    align-items: center; 
+
+.rel-indicator-badge {
+    position: absolute;
+    bottom: 4px;
+    right: 8px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid #ffffff;
+    box-shadow: 0 0 8px rgba(0,0,0,0.8);
 }
-.bg3-portrait { border-radius: 50%; object-fit: cover; }
-.npc-portrait { width: 70px; height: 70px; margin-right: 20px; border: 2px solid #c1a35b; }
-.bg3-npc-name { color: #000000 !important; font-weight: bold; }
-.rel-indicator { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #222; margin-top: 5px; }
 .status-friendly { background-color: #2e7d32; box-shadow: 0 0 10px #2e7d32; }
 .status-hostile { background-color: #c62828; box-shadow: 0 0 10px #c62828; }
 .status-neutral { background-color: #757575; }
 
-/* Teilnehmer-Porträts (Gruppe) */
-.bg3-party-portraits {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-}
-.party-portrait-wrapper {
-    position: relative;
-    opacity: 0.55;
-    transition: all 0.2s ease-in-out;
-}
-.party-portrait {
-    width: 44px;
-    height: 44px;
-    border: 1px solid rgba(0, 0, 0, 0.3);
-    display: block;
-}
-.party-portrait-wrapper.active-speaker {
-    opacity: 1;
-    transform: scale(1.1);
-}
-.party-portrait-wrapper.active-speaker .party-portrait {
-    border: 2px solid #c1a35b;
-    box-shadow: 0 0 10px rgba(193, 163, 91, 0.75);
+.bg3-npc-name-large {
+    color: #000000 !important;
+    font-weight: bold;
+    font-size: 1.1rem;
+    margin: 5px 0 0 0;
+    line-height: 1.2;
 }
 
-/* Haupttext */
+/* --- Zentrum: Pergament-Dialogfenster --- */
+.bg3-dialog-center {
+    flex: 1;
+    min-width: 580px;
+    background: rgba(240, 240, 240, 0.98);
+    color: #000000 !important;
+    border: 2px solid #c1a35b;
+    border-radius: 12px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.7);
+    padding: 25px;
+}
+
 .bg3-main-text, .bg3-main-text * { 
     font-size: 1.25rem; 
     line-height: 1.5; 
-    margin: 20px 0; 
+    margin: 10px 0 20px 0; 
     color: #000000 !important; 
 }
 
 .bg3-insight-box {
     background: rgba(77, 184, 255, 0.2);
     border: 1px solid #006699;
-    padding: 10px;
-    border-radius: 4px;
-    margin-top: 15px;
-    color: #000000 !important;
-}
-.bg3-insight-box i, .bg3-insight-box em {
+    padding: 10px 14px;
+    border-radius: 6px;
+    margin-bottom: 20px;
     color: #000000 !important;
 }
 
@@ -81,11 +109,11 @@
 }
 
 .dialog-option {
-    padding: 10px 15px;
-    margin-bottom: 8px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
     background: rgba(0, 0, 0, 0.05);
     border: 1px solid rgba(0, 0, 0, 0.15);
-    border-radius: 4px;
+    border-radius: 6px;
     cursor: pointer;
     transition: all 0.2s;
     display: flex;
@@ -97,12 +125,11 @@
     border-color: #c1a35b; 
 }
 .dialog-option.voted { 
-    border-left: 4px solid #c1a35b; 
+    border-left: 5px solid #c1a35b; 
     background: rgba(193, 163, 91, 0.2); 
 }
 .dialog-option.disabled { opacity: 0.7; cursor: not-allowed; }
 
-/* Bereits gewählte / besuchte Dialogoptionen (Dezentes Grau & Kursiv) */
 .dialog-option.visited {
     background: rgba(0, 0, 0, 0.02) !important;
     border-color: rgba(0, 0, 0, 0.08) !important;
@@ -114,17 +141,6 @@
     color: #777777 !important;
     font-style: italic;
 }
-.dialog-option.visited:hover {
-    background: rgba(193, 163, 91, 0.15) !important;
-    border-color: rgba(193, 163, 91, 0.5) !important;
-    opacity: 0.9;
-}
-.dialog-option.visited:hover,
-.dialog-option.visited:hover span,
-.dialog-option.visited:hover * {
-    color: #333333 !important;
-    font-style: normal;
-}
 
 .voter-portraits { display: flex; gap: 4px; }
 .voter-img { 
@@ -132,7 +148,77 @@
     box-shadow: 0 0 5px rgba(0,0,0,0.5);
 }
 
-/* Delegations-UI */
+/* --- Rechte Flanke: Spieler-Teilnehmer --- */
+.bg3-flank-right {
+    width: 140px;
+    flex-shrink: 0;
+}
+
+.party-column {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.party-card {
+    background: rgba(240, 240, 240, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    border-radius: 10px;
+    padding: 10px 8px;
+    text-align: center;
+    opacity: 0.6;
+    transition: all 0.2s ease-in-out;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.party-portrait-large {
+    width: 65px;
+    height: 65px;
+    border-radius: 50%;
+    border: 2px solid rgba(0, 0, 0, 0.3);
+    object-fit: cover;
+    display: block;
+    margin-bottom: 6px;
+}
+
+.party-card-name {
+    color: #000000 !important;
+    font-size: 0.85rem;
+    font-weight: 600;
+    max-width: 120px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Hervorhebung des aktiven Hauptsprechers */
+.party-card.active-speaker {
+    opacity: 1;
+    border: 2px solid #c1a35b;
+    transform: scale(1.05);
+    box-shadow: 0 6px 20px rgba(193, 163, 91, 0.65);
+}
+
+.party-card.active-speaker .party-portrait-large {
+    border: 2px solid #c1a35b;
+}
+
+.speaker-pill {
+    background: #c1a35b;
+    color: #000000 !important;
+    font-size: 0.7rem;
+    font-weight: bold;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-top: 4px;
+    letter-spacing: 0.5px;
+}
+
+/* Overlays (Delegation & Spotlight) */
 .bg3-delegation-overlay {
     position: absolute; top: 0; left: 0; width: 100%; height: 100%;
     background: rgba(255,255,255,0.95); display: flex; flex-direction: column;
@@ -149,8 +235,15 @@
 .delegate-img { width: 50px; height: 50px; border-radius: 50%; margin-bottom: 5px; }
 .delegate-bonus { font-weight: bold; display: block; font-size: 1.1rem; color: #000000 !important; }
 
-/* Spotlight (Zuspiel) */
-.bg3-spotlight-ui { text-align: center; padding: 40px; }
+.bg3-spotlight-ui { 
+    background: rgba(240, 240, 240, 0.98); 
+    border: 2px solid #c1a35b; 
+    border-radius: 12px; 
+    text-align: center; 
+    padding: 40px; 
+    margin: 0 auto;
+    width: 600px;
+}
 .bg3-spotlight-ui h2, .bg3-spotlight-ui p, .bg3-spotlight-ui strong { color: #000000 !important; }
 .spotlight-btn { 
     font-size: 1.5rem; padding: 15px 30px; background: #c1a35b; color: black !important; 

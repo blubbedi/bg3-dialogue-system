@@ -602,7 +602,10 @@ class BG3DialogueWindow extends Application {
 
     static get defaultOptions() {
         return foundry.utils.mergeObject(super.defaultOptions, { 
-            id: "bg3-dialog-ui", template: "modules/bg3-dialogue-system/templates/dialog.html", width: 700, height: "auto"
+            id: "bg3-dialog-ui", 
+            template: "modules/bg3-dialogue-system/templates/dialog.html", 
+            width: 1050, // Verbreitert für die Flügel links und rechts
+            height: "auto"
         });
     }
 
@@ -696,7 +699,7 @@ class BG3DialogueWindow extends Application {
             skillLabel = CONFIG.DND5E.skills[this.spotlightData.skill]?.label || this.spotlightData.skill.toUpperCase();
         }
 
-        // Ermittle alle anwesenden Spieler-Charaktere und markiere den aktiven Sprecher
+        // Sammle alle anwesenden Gruppenmitglieder
         const participants = (this.participantIds || []).map(uid => {
             const user = game.users.get(uid);
             const actor = user?.character;
