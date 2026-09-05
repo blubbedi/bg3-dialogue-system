@@ -23,10 +23,20 @@
     </div>
     {{else}}
     <div class="bg3-header">
-        <img src="{{npcImg}}" class="bg3-portrait npc-portrait">
-        <div class="header-info">
-            <h2 class="bg3-npc-name">{{npcName}}</h2>
-            <div class="rel-indicator status-{{relationshipStatus.class}}" title="Stimmung"></div>
+        <div class="bg3-header-left">
+            <img src="{{npcImg}}" class="bg3-portrait npc-portrait">
+            <div class="header-info">
+                <h2 class="bg3-npc-name">{{npcName}}</h2>
+                <div class="rel-indicator status-{{relationshipStatus.class}}" title="Stimmung"></div>
+            </div>
+        </div>
+
+        <div class="bg3-party-portraits">
+            {{#each participants}}
+                <div class="party-portrait-wrapper {{#if isSpeaker}}active-speaker{{/if}}" title="{{name}}{{#if isSpeaker}} (Sprecher){{/if}}">
+                    <img src="{{img}}" class="bg3-portrait party-portrait">
+                </div>
+            {{/each}}
         </div>
     </div>
     

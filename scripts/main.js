@@ -696,13 +696,36 @@ class BG3DialogueWindow extends Application {
             skillLabel = CONFIG.DND5E.skills[this.spotlightData.skill]?.label || this.spotlightData.skill.toUpperCase();
         }
 
+        // Ermittle alle anwesenden Spieler-Charaktere und markiere den aktiven Sprecher
+        const participants = (this.participantIds || []).map(uid => {
+            const user = game.users.get(uid);
+            const actor = user?.character;
+            if (!actor) return null;
+            return {
+                id: actor.id,
+                name: actor.name,
+                img: actor.img,
+                isSpeaker: actor.id === this.pc?.id
+            };
+        }).filter(p => p !== null);
+
         return {
-            npcName: this.npc ? this.npc.name : "NSC", npcImg: this.npc ? this.npc.img : "", pcImg: this.pc?.img, pcName: this.pc?.name, text: node?.text,
-            options, isInitiator: this.isInitiator, isSpotlight: this.isSpotlight, spotlightSkill: skillLabel,
-            showDelegation: this.showDelegation, potentialDelegates: this.showDelegation ? this._getPotentialDelegates() : [],
+            npcName: this.npc ? this.npc.name : "NSC", 
+            npcImg: this.npc ? this.npc.img : "", 
+            pcImg: this.pc?.img, 
+            pcName: this.pc?.name, 
+            text: node?.text,
+            options, 
+            isInitiator: this.isInitiator, 
+            isSpotlight: this.isSpotlight, 
+            spotlightSkill: skillLabel,
+            showDelegation: this.showDelegation, 
+            potentialDelegates: this.showDelegation ? this._getPotentialDelegates() : [],
             relationshipStatus: { class: this.relScore >= 5 ? "friendly" : (this.relScore <= -5 ? "hostile" : "neutral") },
-            showInsight: this.insightResults[this.currentNodeKey], insightText: node?.reactive_check?.success_text,
-            isEndNode: options.length === 0
+            showInsight: this.insightResults[this.currentNodeKey], 
+            insightText: node?.reactive_check?.success_text,
+            isEndNode: options.length === 0,
+            participants: participants
         };
     }
 

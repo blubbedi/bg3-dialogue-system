@@ -9,14 +9,50 @@
 .bg3-dialog-wrapper { padding: 20px; position: relative; }
 
 /* Header & Body */
-.bg3-header { display: flex; align-items: center; border-bottom: 1px solid #c1a35b; padding-bottom: 15px; }
-.bg3-portrait { border: 2px solid #c1a35b; border-radius: 50%; object-fit: cover; }
-.npc-portrait { width: 70px; height: 70px; margin-right: 20px; }
+.bg3-header { 
+    display: flex; 
+    align-items: center; 
+    justify-content: space-between; 
+    border-bottom: 1px solid #c1a35b; 
+    padding-bottom: 15px; 
+}
+.bg3-header-left { 
+    display: flex; 
+    align-items: center; 
+}
+.bg3-portrait { border-radius: 50%; object-fit: cover; }
+.npc-portrait { width: 70px; height: 70px; margin-right: 20px; border: 2px solid #c1a35b; }
 .bg3-npc-name { color: #000000 !important; font-weight: bold; }
 .rel-indicator { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #222; margin-top: 5px; }
 .status-friendly { background-color: #2e7d32; box-shadow: 0 0 10px #2e7d32; }
 .status-hostile { background-color: #c62828; box-shadow: 0 0 10px #c62828; }
 .status-neutral { background-color: #757575; }
+
+/* Teilnehmer-Porträts (Gruppe) */
+.bg3-party-portraits {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.party-portrait-wrapper {
+    position: relative;
+    opacity: 0.55;
+    transition: all 0.2s ease-in-out;
+}
+.party-portrait {
+    width: 44px;
+    height: 44px;
+    border: 1px solid rgba(0, 0, 0, 0.3);
+    display: block;
+}
+.party-portrait-wrapper.active-speaker {
+    opacity: 1;
+    transform: scale(1.1);
+}
+.party-portrait-wrapper.active-speaker .party-portrait {
+    border: 2px solid #c1a35b;
+    box-shadow: 0 0 10px rgba(193, 163, 91, 0.75);
+}
 
 /* Haupttext */
 .bg3-main-text, .bg3-main-text * { 
