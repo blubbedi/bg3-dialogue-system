@@ -68,7 +68,7 @@ Hooks.once('ready', async () => {
                 new BG3DialogueWindow(
                     data.npcId, data.pcId, data.fullTree, data.startNode, false, 
                     data.relScore, data.relTags, data.isInitiator, data.participantIds,
-                    data.chosenOptions || []
+                    data.chosenOptions || [], data.speakerActorId
                 ).render(true);
             }
         } else if (data.type === "playVoice") {
@@ -312,6 +312,7 @@ class BG3DialogueSystem {
 
         const npc = game.actors.get(npcId);
         const user = game.users.get(initiatorUserId);
+        const speakerActorId = user?.character ? user.character.id : null;
         let fullTree = null;
 
         const externalPath = npc.getFlag(MOD_ID, "dialogPath");
@@ -340,7 +341,8 @@ class BG3DialogueSystem {
             const activeUsers = game.users.filter(u => participantIds.includes(u.id) || u.isGM);
             
             this.activeSessions[npcId] = { 
-                initiatorId: initiatorUserId, 
+                initiatorId: initiatorUserId,
+                speakerActorId: speakerActorId,
                 participantIds: participantIds,
                 pcName: user?.character?.name || user.name, 
                 votes: {}, 
@@ -368,14 +370,16 @@ class BG3DialogueSystem {
                     new BG3DialogueWindow(
                         npcId, pcId, fullTree, "startNode", false, 
                         relData.score, relData.tags, isInitiator, participantIds,
-                        Array.from(this.activeSessions[npcId].chosenOptions)
+                        Array.from(this.activeSessions[npcId].chosenOptions),
+                        speakerActorId
                     ).render(true);
                 } else {
                     game.socket.emit(`module.${MOD_ID}`, { 
                         type: "showDialog", npcId, pcId: pcId, receiverId: u.id, 
                         fullTree, startNode: "startNode", relScore: relData.score, 
                         relTags: relData.tags, isInitiator, participantIds,
-                        chosenOptions: Array.from(this.activeSessions[npcId].chosenOptions)
+                        chosenOptions: Array.from(this.activeSessions[npcId].chosenOptions),
+                        speakerActorId: speakerActorId
                     });
                 }
             });
@@ -579,7 +583,7 @@ class BG3DialogueSystem {
 }
 
 class BG3DialogueWindow extends Application {
-    constructor(npcId, pcId, fullTree, currentNodeKey, isObserver = false, relScore = 0, relTags = [], isInitiator = false, participantIds = [], chosenOptions = []) {
+    constructor(npcId, pcId, fullTree, currentNodeKey, isObserver = false, relScore = 0, relTags = [], isInitiator = false, participantIds = [], chosenOptions = [], speakerActorId = null) {
         super();
         this.npcId = npcId;
         this.npc = game.actors.get(npcId);
@@ -592,6 +596,7 @@ class BG3DialogueWindow extends Application {
         this.isInitiator = isInitiator;
         this.participantIds = participantIds;
         this.chosenOptions = new Set(chosenOptions);
+        this.speakerActorId = speakerActorId;
         this.votes = {}; 
         this.isSpotlight = false;
         this.showDelegation = false;
@@ -604,7 +609,7 @@ class BG3DialogueWindow extends Application {
         return foundry.utils.mergeObject(super.defaultOptions, { 
             id: "bg3-dialog-ui", 
             template: "modules/bg3-dialogue-system/templates/dialog.html", 
-            width: 1050, // Verbreitert für die Flügel links und rechts
+            width: 1050, 
             height: "auto"
         });
     }
@@ -699,7 +704,7 @@ class BG3DialogueWindow extends Application {
             skillLabel = CONFIG.DND5E.skills[this.spotlightData.skill]?.label || this.spotlightData.skill.toUpperCase();
         }
 
-        // Sammle alle anwesenden Gruppenmitglieder
+        // Globaler Sprecher-Vergleich über speakerActorId
         const participants = (this.participantIds || []).map(uid => {
             const user = game.users.get(uid);
             const actor = user?.character;
@@ -708,7 +713,7 @@ class BG3DialogueWindow extends Application {
                 id: actor.id,
                 name: actor.name,
                 img: actor.img,
-                isSpeaker: actor.id === this.pc?.id
+                isSpeaker: Boolean(this.speakerActorId && actor.id === this.speakerActorId)
             };
         }).filter(p => p !== null);
 
