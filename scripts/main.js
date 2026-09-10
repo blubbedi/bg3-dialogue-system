@@ -629,14 +629,14 @@ class BG3DialogueWindow extends Application {
         this._resizeListener = null;
     }
 
-    // Dynamische Breiten- und Positionsberechnung pro Client-Auflösung
+    // Höhere Platzierung (4vh) und dynamische Client-Breite
     static getResponsiveBounds() {
         const vw = window.innerWidth;
         const vh = window.innerHeight;
-        // Nutzt 76% der Breite (min. 860px, max. 1450px)
+        // 76% der Viewport-Breite (zwischen 860px und 1450px)
         const width = Math.min(1450, Math.max(860, Math.floor(vw * 0.76)));
         const left = Math.floor((vw - width) / 2);
-        const top = Math.floor(vh * 0.12);
+        const top = Math.max(24, Math.floor(vh * 0.04));
         return { width, left, top };
     }
 
@@ -802,7 +802,7 @@ class BG3DialogueWindow extends Application {
     activateListeners(html) {
         super.activateListeners(html);
 
-        // Dynamischer Fenster-Resize-Listener
+        // Fenster bei Resize im Viewport synchronisieren
         if (!this._resizeListener) {
             this._resizeListener = () => {
                 const bounds = BG3DialogueWindow.getResponsiveBounds();

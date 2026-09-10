@@ -54,7 +54,7 @@
     align-items: flex-start;
     justify-content: center;
     gap: clamp(14px, 1.6vw, 28px);
-    padding: clamp(10px, 1.5vh, 20px) 0;
+    padding: clamp(6px, 1vh, 14px) 0;
     position: relative;
     font-family: 'Fauna One', serif;
     width: 100%;
@@ -147,22 +147,25 @@
     padding: clamp(16px, 2vh, 28px) clamp(18px, 2vw, 36px);
 }
 
-/* Vertikale Begrenzung gegen Überlaufen */
+/* Nach unten hin deutlich vergrößert: Nutzt bis zu 60% der Viewport-Höhe */
 .bg3-body {
-    max-height: clamp(240px, 42vh, 480px);
+    max-height: clamp(320px, 60vh, 720px);
     overflow-y: auto;
-    padding-right: 8px;
+    padding-right: 10px;
 }
 
 .bg3-body::-webkit-scrollbar {
-    width: 5px;
+    width: 6px;
 }
 .bg3-body::-webkit-scrollbar-thumb {
     background: rgba(193, 163, 91, 0.35);
     border-radius: 3px;
 }
+.bg3-body::-webkit-scrollbar-thumb:hover {
+    background: rgba(193, 163, 91, 0.6);
+}
 
-/* Fluid Typography: Textgröße passt sich der Monitorbreite an */
+/* Fluid Typography */
 .bg3-main-text {
     font-size: clamp(0.95rem, 1.05vw, 1.2rem);
     line-height: 1.6;
