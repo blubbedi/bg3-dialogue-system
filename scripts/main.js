@@ -2,11 +2,12 @@ const MOD_ID = 'bg3-dialogue-system';
 
 function log(msg) { console.log(`BG3-DIALOG | ${msg}`); }
 
-// Zentraler Sound-Controller für einzelne Audios
+// Zentraler Sound-Controller mit Sprech-Status-Tracking
 class BG3AudioController {
     static currentAudio = null;
+    static isPlaying = false;
 
-    static playVoice(src) {
+    static playVoice(src, onStateChange = null) {
         if (!src) return;
         this.stopVoice();
 
@@ -14,16 +15,28 @@ class BG3AudioController {
             const audio = new Audio(src);
             audio.volume = game.settings.get("core", "globalInterfaceVolume") ?? 0.8;
             this.currentAudio = audio;
+            this.isPlaying = true;
+
+            if (onStateChange) onStateChange(true);
+
+            audio.onended = () => {
+                this.isPlaying = false;
+                if (onStateChange) onStateChange(false);
+            };
 
             audio.play().catch(err => {
                 log(`Wiedergabe blockiert oder fehlgeschlagen: ${err}`);
+                this.isPlaying = false;
+                if (onStateChange) onStateChange(false);
             });
         } catch (e) {
             log(`Audiofehler beim Abspielen von ${src}: ${e}`);
+            this.isPlaying = false;
+            if (onStateChange) onStateChange(false);
         }
     }
 
-    static stopVoice() {
+    static stopVoice(onStateChange = null) {
         if (this.currentAudio) {
             try {
                 this.currentAudio.pause();
@@ -31,6 +44,8 @@ class BG3AudioController {
             } catch(e) {}
             this.currentAudio = null;
         }
+        this.isPlaying = false;
+        if (onStateChange) onStateChange(false);
     }
 }
 
@@ -55,6 +70,7 @@ Hooks.once('init', () => {
         name: "NPC-Ordner Name", scope: "world", config: true, type: String, default: "BG3-Dialogue-NPCs"
     });
     Handlebars.registerHelper('add', (a, b) => Number(a) + Number(b));
+    Handlebars.registerHelper('not', (a) => !a);
 });
 
 Hooks.once('ready', async () => {
@@ -73,7 +89,10 @@ Hooks.once('ready', async () => {
             }
         } else if (data.type === "playVoice") {
             if (data.userIds && data.userIds.includes(game.user.id)) {
-                BG3AudioController.playVoice(data.audioSrc);
+                windows.forEach(w => w.setSpeakingState(true));
+                BG3AudioController.playVoice(data.audioSrc, (playing) => {
+                    windows.forEach(w => w.setSpeakingState(playing));
+                });
             }
         } else if (data.type === "syncVotes") {
             windows.forEach(w => { w.votes = data.votes; w.render(true); });
@@ -278,7 +297,7 @@ class BG3DialogueSystem {
                 <hr>
                 <div class="form-group" style="flex-direction: column; align-items: flex-start;">
                     <label style="margin-bottom: 8px; font-weight: bold;">Wer ist bei dem Gespräch anwesend?</label>
-                    <div style="background: rgba(0,0,0,0.1); padding: 10px; border-radius: 5px; width: 100%; border: 1px solid #444;">
+                    <div style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 5px; width: 100%; border: 1px solid rgba(193, 163, 91, 0.3);">
                         ${participantCheckboxes}
                     </div>
                 </div>
@@ -354,7 +373,10 @@ class BG3DialogueSystem {
 
             // Startknoten-Audio abspielen
             if (fullTree.startNode?.audio) {
-                BG3AudioController.playVoice(fullTree.startNode.audio);
+                BG3AudioController.playVoice(fullTree.startNode.audio, (playing) => {
+                    const localWindows = Object.values(ui.windows).filter(a => a instanceof BG3DialogueWindow && (a.npc?.id === npcId || a.npcId === npcId));
+                    localWindows.forEach(w => w.setSpeakingState(playing));
+                });
                 game.socket.emit(`module.${MOD_ID}`, {
                     type: "playVoice",
                     audioSrc: fullTree.startNode.audio,
@@ -454,7 +476,7 @@ class BG3DialogueSystem {
         session.currentNodeKey = data.nextKey;
         session.votes = {};
         
-        // 1. An alle anderen Clients senden
+        // An alle anderen Clients senden
         game.socket.emit(`module.${MOD_ID}`, { 
             type: "syncNode", 
             npcId: data.npcId, 
@@ -462,7 +484,7 @@ class BG3DialogueSystem {
             chosenOptions: Array.from(session.chosenOptions)
         });
 
-        // 2. Lokal beim Spielleiter aktualisieren
+        // Lokal beim Spielleiter aktualisieren
         const localWindows = Object.values(ui.windows).filter(a => a instanceof BG3DialogueWindow && (a.npc?.id === data.npcId || a.npcId === data.npcId));
         localWindows.forEach(w => {
             w.currentNodeKey = data.nextKey;
@@ -474,16 +496,21 @@ class BG3DialogueSystem {
             else w.close();
         });
 
-        // Synchrones Audio für den neuen Knoten starten
+        // Synchrones Audio starten
         if (nextNode?.audio) {
-            BG3AudioController.playVoice(nextNode.audio);
+            localWindows.forEach(w => w.setSpeakingState(true));
+            BG3AudioController.playVoice(nextNode.audio, (playing) => {
+                localWindows.forEach(w => w.setSpeakingState(playing));
+            });
             game.socket.emit(`module.${MOD_ID}`, {
                 type: "playVoice",
                 audioSrc: nextNode.audio,
                 userIds: session.participantIds
             });
         } else {
-            BG3AudioController.stopVoice();
+            BG3AudioController.stopVoice((playing) => {
+                localWindows.forEach(w => w.setSpeakingState(playing));
+            });
         }
 
         if (!data.nextKey) {
@@ -496,7 +523,7 @@ class BG3DialogueSystem {
         const session = this.activeSessions[data.npcId];
         if (!session) return;
         session.history.push(`<b>${data.speaker}:</b> ${data.text}`);
-        if (data.systemLog) session.history.push(`<span style="color: #8b0000; font-size: 0.9em;"><i>${data.systemLog}</i></span>`);
+        if (data.systemLog) session.history.push(`<span style="color: #c62828; font-size: 0.9em;"><i>${data.systemLog}</i></span>`);
         if (data.nextNodeText) session.history.push(`<b>${game.actors.get(data.npcId).name}:</b> ${data.nextNodeText}`);
 
         ChatMessage.create({ speaker: { alias: data.speaker }, content: `<div class="bg3-chat-msg pc-msg"><b>${data.speaker}:</b> ${data.text}</div>` });
@@ -519,9 +546,9 @@ class BG3DialogueSystem {
         }
 
         ChatMessage.create({
-            content: `<div style="background: rgba(198, 40, 40, 0.15); border: 2px solid #c62828; padding: 10px; border-radius: 5px; text-align: center; margin-top: 10px;">
-                        <h2 style="color: #c62828; margin: 0; font-family: Modesto Condensed, sans-serif;">⚔️ INITIATIVE WÜRFELN!</h2>
-                        <p style="margin: 5px 0 0 0; font-size: 1.1em; color: #ddd;"><b>${speaker}</b> und die Gruppe greifen zu den Waffen!</p>
+            content: `<div style="background: rgba(198, 40, 40, 0.2); border: 2px solid #c62828; padding: 10px; border-radius: 5px; text-align: center; margin-top: 10px;">
+                        <h2 style="color: #c62828; margin: 0; font-family: 'Cinzel', serif;">⚔️ INITIATIVE WÜRFELN!</h2>
+                        <p style="margin: 5px 0 0 0; font-size: 1.1em; color: #ded1b2;"><b>${speaker}</b> und die Gruppe greifen zu den Waffen!</p>
                       </div>`
         });
 
@@ -603,15 +630,25 @@ class BG3DialogueWindow extends Application {
         this.pendingOptIndex = null;
         this.insightResults = {};
         this.processedNodes = new Set();
+        this.isSpeaking = false;
     }
 
     static get defaultOptions() {
         return foundry.utils.mergeObject(super.defaultOptions, { 
             id: "bg3-dialog-ui", 
             template: "modules/bg3-dialogue-system/templates/dialog.html", 
-            width: 1050, 
+            width: 1080, 
             height: "auto"
         });
+    }
+
+    setSpeakingState(speaking) {
+        this.isSpeaking = speaking;
+        const portrait = this.element.find('.npc-portrait-large');
+        if (portrait.length) {
+            if (speaking) portrait.addClass('speaking');
+            else portrait.removeClass('speaking');
+        }
     }
 
     async close(options) {
@@ -704,7 +741,6 @@ class BG3DialogueWindow extends Application {
             skillLabel = CONFIG.DND5E.skills[this.spotlightData.skill]?.label || this.spotlightData.skill.toUpperCase();
         }
 
-        // Globaler Sprecher-Vergleich über speakerActorId
         const participants = (this.participantIds || []).map(uid => {
             const user = game.users.get(uid);
             const actor = user?.character;
@@ -733,7 +769,8 @@ class BG3DialogueWindow extends Application {
             showInsight: this.insightResults[this.currentNodeKey], 
             insightText: node?.reactive_check?.success_text,
             isEndNode: options.length === 0,
-            participants: participants
+            participants: participants,
+            isSpeaking: this.isSpeaking || BG3AudioController.isPlaying
         };
     }
 
@@ -848,7 +885,7 @@ class BG3DialogueWindow extends Application {
             const useInsp = await new Promise(resolve => {
                 new Dialog({
                     title: "✨ Inspiration einsetzen?",
-                    content: `<p style="text-align: center;">Dein Wurf <b>(${total})</b> war ein <b>Fehlschlag</b> (SG ${finalDC}).<br>Inspiration nutzen?</p>`,
+                    content: `<p style="text-align: center; color: #f4eedb;">Dein Wurf <b>(${total})</b> war ein <b>Fehlschlag</b> (SG ${finalDC}).<br>Inspiration nutzen?</p>`,
                     buttons: {
                         yes: { label: "Ja", callback: () => resolve(true) },
                         no: { label: "Nein", callback: () => resolve(false) }
