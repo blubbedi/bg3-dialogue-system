@@ -371,7 +371,6 @@ class BG3DialogueSystem {
                 history: [`<b>${npc.name}:</b> ${fullTree.startNode.text}`] 
             };
 
-            // Startknoten-Audio abspielen
             if (fullTree.startNode?.audio) {
                 BG3AudioController.playVoice(fullTree.startNode.audio, (playing) => {
                     const localWindows = Object.values(ui.windows).filter(a => a instanceof BG3DialogueWindow && (a.npc?.id === npcId || a.npcId === npcId));
@@ -448,7 +447,6 @@ class BG3DialogueSystem {
         const session = this.activeSessions[data.npcId];
         if (!session) return;
 
-        // Gewählte Option & besuchten Zielknoten registrieren
         if (data.optIndex !== undefined && data.optIndex !== null) {
             session.chosenOptions.add(`${session.currentNodeKey}_${data.optIndex}`);
             if (data.nextKey) session.chosenOptions.add(`node_${data.nextKey}`);
@@ -476,7 +474,6 @@ class BG3DialogueSystem {
         session.currentNodeKey = data.nextKey;
         session.votes = {};
         
-        // An alle anderen Clients senden
         game.socket.emit(`module.${MOD_ID}`, { 
             type: "syncNode", 
             npcId: data.npcId, 
@@ -484,7 +481,6 @@ class BG3DialogueSystem {
             chosenOptions: Array.from(session.chosenOptions)
         });
 
-        // Lokal beim Spielleiter aktualisieren
         const localWindows = Object.values(ui.windows).filter(a => a instanceof BG3DialogueWindow && (a.npc?.id === data.npcId || a.npcId === data.npcId));
         localWindows.forEach(w => {
             w.currentNodeKey = data.nextKey;
@@ -496,7 +492,6 @@ class BG3DialogueSystem {
             else w.close();
         });
 
-        // Synchrones Audio starten
         if (nextNode?.audio) {
             localWindows.forEach(w => w.setSpeakingState(true));
             BG3AudioController.playVoice(nextNode.audio, (playing) => {
@@ -631,14 +626,30 @@ class BG3DialogueWindow extends Application {
         this.insightResults = {};
         this.processedNodes = new Set();
         this.isSpeaking = false;
+        this._resizeListener = null;
+    }
+
+    // Dynamische Breiten- und Positionsberechnung pro Client-Auflösung
+    static getResponsiveBounds() {
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        // Nutzt 76% der Breite (min. 860px, max. 1450px)
+        const width = Math.min(1450, Math.max(860, Math.floor(vw * 0.76)));
+        const left = Math.floor((vw - width) / 2);
+        const top = Math.floor(vh * 0.12);
+        return { width, left, top };
     }
 
     static get defaultOptions() {
+        const bounds = BG3DialogueWindow.getResponsiveBounds();
         return foundry.utils.mergeObject(super.defaultOptions, { 
             id: "bg3-dialog-ui", 
             template: "modules/bg3-dialogue-system/templates/dialog.html", 
-            width: 1320, 
-            height: "auto"
+            width: bounds.width,
+            left: bounds.left,
+            top: bounds.top,
+            height: "auto",
+            resizable: false
         });
     }
 
@@ -652,6 +663,10 @@ class BG3DialogueWindow extends Application {
     }
 
     async close(options) {
+        if (this._resizeListener) {
+            window.removeEventListener('resize', this._resizeListener);
+            this._resizeListener = null;
+        }
         BG3AudioController.stopVoice();
         if (this.isInitiator) dispatchSystemEvent({ type: "closeObserver", npcId: this.npcId });
         return super.close(options);
@@ -786,6 +801,15 @@ class BG3DialogueWindow extends Application {
 
     activateListeners(html) {
         super.activateListeners(html);
+
+        // Dynamischer Fenster-Resize-Listener
+        if (!this._resizeListener) {
+            this._resizeListener = () => {
+                const bounds = BG3DialogueWindow.getResponsiveBounds();
+                this.setPosition({ width: bounds.width, left: bounds.left, top: bounds.top, height: "auto" });
+            };
+            window.addEventListener('resize', this._resizeListener);
+        }
 
         html.find('.dialog-option').click(async ev => {
             const idx = $(ev.currentTarget).data('index');

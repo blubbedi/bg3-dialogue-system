@@ -13,7 +13,7 @@
     overflow: visible !important;
 }
 
-/* Vollbild-Canvas-Verdunklung mit Unschärfe & Kinobalken */
+/* Vollbild-Canvas-Verdunklung mit Weichzeichner */
 .bg3-cinematic-bars {
     position: fixed;
     top: 0;
@@ -39,7 +39,7 @@
     position: fixed;
     left: 0;
     width: 100vw;
-    height: 65px;
+    height: clamp(35px, 5vh, 65px);
     background: #000000;
     box-shadow: 0 0 35px rgba(0, 0, 0, 0.95);
     z-index: 1;
@@ -48,20 +48,21 @@
 .bg3-letterbox-bar.top { top: 0; }
 .bg3-letterbox-bar.bottom { bottom: 0; }
 
-/* 3-Spalten-Layout (Breiter & Zentriert) */
+/* 3-Spalten-Layout mit fließendem Spacing */
 .bg3-dialog-wrapper {
     display: flex;
     align-items: flex-start;
     justify-content: center;
-    gap: 28px;
-    padding: 20px 10px;
+    gap: clamp(14px, 1.6vw, 28px);
+    padding: clamp(10px, 1.5vh, 20px) 0;
     position: relative;
     font-family: 'Fauna One', serif;
+    width: 100%;
 }
 
 /* --- Linke Flanke: NSC-Bereich --- */
 .bg3-flank-left {
-    width: 180px;
+    width: clamp(130px, 12vw, 180px);
     flex-shrink: 0;
 }
 
@@ -69,7 +70,7 @@
     background: linear-gradient(180deg, rgba(20, 22, 28, 0.96) 0%, rgba(12, 13, 16, 0.98) 100%);
     border: 1px solid rgba(193, 163, 91, 0.35);
     border-radius: 12px;
-    padding: 16px 10px;
+    padding: clamp(10px, 1.2vw, 16px) clamp(6px, 0.8vw, 10px);
     text-align: center;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), inset 0 0 15px rgba(193, 163, 91, 0.05);
     backdrop-filter: blur(8px);
@@ -77,9 +78,9 @@
 
 .npc-portrait-container {
     position: relative;
-    width: 130px;
-    height: 130px;
-    margin: 0 auto 10px auto;
+    width: clamp(85px, 8.5vw, 130px);
+    height: clamp(85px, 8.5vw, 130px);
+    margin: 0 auto clamp(6px, 0.8vw, 10px) auto;
 }
 
 .npc-portrait-large {
@@ -111,10 +112,10 @@
 
 .rel-indicator-badge {
     position: absolute;
-    bottom: 4px;
-    right: 8px;
-    width: 22px;
-    height: 22px;
+    bottom: 2px;
+    right: 4px;
+    width: clamp(16px, 1.4vw, 22px);
+    height: clamp(16px, 1.4vw, 22px);
     border-radius: 50%;
     border: 2px solid #14161c;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.9);
@@ -127,36 +128,49 @@
     font-family: 'Cinzel', serif;
     color: #d8b873 !important;
     font-weight: 700;
-    font-size: 1.15rem;
-    margin: 6px 0 0 0;
+    font-size: clamp(0.9rem, 0.95vw, 1.15rem);
+    margin: 4px 0 0 0;
     line-height: 1.2;
     text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9);
     letter-spacing: 0.5px;
 }
 
-/* --- Zentrum: Stark verbreitertes Cinematic-Dialogfenster --- */
+/* --- Zentrum: Responsives Cinematic-Dialogfenster --- */
 .bg3-dialog-center {
     flex: 1;
-    min-width: 820px;
-    max-width: 980px;
+    min-width: 0;
     background: linear-gradient(180deg, rgba(22, 24, 30, 0.96) 0%, rgba(13, 14, 18, 0.98) 100%);
     border: 1px solid rgba(193, 163, 91, 0.3);
     border-radius: 12px;
     box-shadow: 0 12px 45px rgba(0, 0, 0, 0.85), inset 0 0 25px rgba(0, 0, 0, 0.6);
     backdrop-filter: blur(10px);
-    padding: 28px 36px;
+    padding: clamp(16px, 2vh, 28px) clamp(18px, 2vw, 36px);
 }
 
-/* Textfarben & Typographie */
+/* Vertikale Begrenzung gegen Überlaufen */
+.bg3-body {
+    max-height: clamp(240px, 42vh, 480px);
+    overflow-y: auto;
+    padding-right: 8px;
+}
+
+.bg3-body::-webkit-scrollbar {
+    width: 5px;
+}
+.bg3-body::-webkit-scrollbar-thumb {
+    background: rgba(193, 163, 91, 0.35);
+    border-radius: 3px;
+}
+
+/* Fluid Typography: Textgröße passt sich der Monitorbreite an */
 .bg3-main-text {
-    font-size: 1.18rem;
-    line-height: 1.65;
-    margin: 4px 0 18px 0;
+    font-size: clamp(0.95rem, 1.05vw, 1.2rem);
+    line-height: 1.6;
+    margin: 4px 0 14px 0;
     color: #f4eedb !important;
     text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
 }
 
-/* Sprechernamen */
 .bg3-main-text b {
     font-family: 'Cinzel', serif;
     color: #d8b873 !important;
@@ -164,7 +178,6 @@
     letter-spacing: 0.4px;
 }
 
-/* Regieanweisungen & Erzähler */
 .bg3-main-text i {
     color: #a39d8f !important;
     font-style: italic;
@@ -177,11 +190,11 @@
     border-top: 1px solid rgba(60, 168, 230, 0.2);
     border-bottom: 1px solid rgba(60, 168, 230, 0.2);
     border-right: 1px solid rgba(60, 168, 230, 0.2);
-    padding: 10px 14px;
+    padding: clamp(6px, 0.8vh, 10px) clamp(8px, 1vw, 14px);
     border-radius: 4px;
-    margin: 15px 0 20px 0;
+    margin: 10px 0 16px 0;
     color: #b5daf0 !important;
-    font-size: 1rem;
+    font-size: clamp(0.85rem, 0.9vw, 1rem);
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
     display: flex;
     align-items: center;
@@ -190,18 +203,18 @@
 
 .insight-icon {
     color: #3ca8e6;
-    font-size: 1.1rem;
+    font-size: clamp(0.9rem, 1vw, 1.1rem);
 }
 
-/* Zarter Goldtrenner */
+/* Goldtrenner */
 .bg3-separator {
     height: 1px;
     width: 100%;
-    margin: 18px 0 20px 0;
+    margin: clamp(12px, 1.5vh, 18px) 0;
     background: linear-gradient(90deg, transparent 0%, rgba(193, 163, 91, 0.35) 30%, rgba(193, 163, 91, 0.35) 70%, transparent 100%);
 }
 
-/* --- Optionen & Interaktion --- */
+/* Optionen-Liste */
 .bg3-options-list {
     list-style: none;
     padding: 0;
@@ -209,8 +222,8 @@
 }
 
 .dialog-option {
-    padding: 12px 18px;
-    margin-bottom: 10px;
+    padding: clamp(8px, 1vh, 12px) clamp(10px, 1.2vw, 18px);
+    margin-bottom: clamp(6px, 0.8vh, 10px);
     background: rgba(255, 255, 255, 0.035);
     border: 1px solid rgba(193, 163, 91, 0.18);
     border-radius: 6px;
@@ -224,7 +237,7 @@
 
 .dialog-option-text {
     color: #ded1b2 !important;
-    font-size: 1.05rem;
+    font-size: clamp(0.9rem, 0.95vw, 1.05rem);
     line-height: 1.4;
     transition: color 0.2s;
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
@@ -233,11 +246,10 @@
 .opt-number {
     font-family: 'Cinzel', serif;
     color: #a39d8f;
-    margin-right: 8px;
+    margin-right: 6px;
     font-weight: bold;
 }
 
-/* Hover-Status */
 .dialog-option:hover {
     background: linear-gradient(90deg, rgba(193, 163, 91, 0.25) 0%, rgba(193, 163, 91, 0.06) 100%);
     border-color: #c1a35b;
@@ -254,13 +266,11 @@
     color: #d8b873;
 }
 
-/* Voted-Status */
 .dialog-option.voted {
     border-left: 5px solid #d8b873;
     background: rgba(193, 163, 91, 0.22);
 }
 
-/* Bereits besucht */
 .dialog-option.visited {
     background: rgba(0, 0, 0, 0.25) !important;
     border-color: rgba(255, 255, 255, 0.07) !important;
@@ -279,13 +289,13 @@
 
 .voter-portraits {
     display: flex;
-    gap: 5px;
-    margin-left: 12px;
+    gap: 4px;
+    margin-left: 10px;
 }
 
 .voter-img {
-    width: 26px;
-    height: 26px;
+    width: clamp(20px, 1.6vw, 26px);
+    height: clamp(20px, 1.6vw, 26px);
     border-radius: 50%;
     border: 1px solid #d8b873;
     box-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
@@ -294,28 +304,28 @@
 .bg3-advisor-hint {
     color: #8f8574;
     text-align: center;
-    margin-top: 14px;
-    font-size: 0.88rem;
+    margin-top: clamp(8px, 1.2vh, 14px);
+    font-size: clamp(0.75rem, 0.8vw, 0.88rem);
     font-style: italic;
 }
 
 /* --- Rechte Flanke: Spieler-Teilnehmer --- */
 .bg3-flank-right {
-    width: 140px;
+    width: clamp(100px, 9.5vw, 140px);
     flex-shrink: 0;
 }
 
 .party-column {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: clamp(8px, 1.1vh, 14px);
 }
 
 .party-card {
     background: linear-gradient(180deg, rgba(20, 22, 28, 0.94) 0%, rgba(12, 13, 16, 0.96) 100%);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 10px;
-    padding: 10px 8px;
+    padding: clamp(6px, 0.8vh, 10px) clamp(4px, 0.5vw, 8px);
     text-align: center;
     opacity: 0.55;
     transition: all 0.25s ease-in-out;
@@ -327,26 +337,25 @@
 }
 
 .party-portrait-large {
-    width: 65px;
-    height: 65px;
+    width: clamp(45px, 4.5vw, 65px);
+    height: clamp(45px, 4.5vw, 65px);
     border-radius: 50%;
     border: 2px solid rgba(255, 255, 255, 0.2);
     object-fit: cover;
     display: block;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 
 .party-card-name {
     color: #ded1b2 !important;
-    font-size: 0.85rem;
+    font-size: clamp(0.72rem, 0.75vw, 0.85rem);
     font-weight: 600;
-    max-width: 120px;
+    max-width: 110px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-/* Aktiver Sprecher */
 .party-card.active-speaker {
     opacity: 1;
     border: 1px solid #d8b873;
@@ -362,13 +371,13 @@
     background: #d8b873;
     color: #0b0c0f !important;
     font-family: 'Cinzel', serif;
-    font-size: 0.68rem;
+    font-size: clamp(0.58rem, 0.62vw, 0.68rem);
     font-weight: bold;
     text-transform: uppercase;
-    padding: 2px 8px;
+    padding: 2px 6px;
     border-radius: 10px;
-    margin-top: 5px;
-    letter-spacing: 0.6px;
+    margin-top: 4px;
+    letter-spacing: 0.5px;
 }
 
 /* --- Overlays (Delegation & Spotlight) --- */
@@ -387,28 +396,31 @@
     border-radius: 12px;
     backdrop-filter: blur(8px);
     border: 1px solid rgba(193, 163, 91, 0.3);
+    padding: 20px;
 }
 
 .delegation-title {
     font-family: 'Cinzel', serif;
     color: #d8b873 !important;
-    margin-bottom: 24px;
-    font-size: 1.5rem;
+    margin-bottom: clamp(14px, 2vh, 24px);
+    font-size: clamp(1.2rem, 1.4vw, 1.5rem);
 }
 
 .delegation-list {
     display: flex;
-    gap: 16px;
+    gap: clamp(10px, 1.2vw, 16px);
+    flex-wrap: wrap;
+    justify-content: center;
 }
 
 .delegate-btn {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(193, 163, 91, 0.3);
     border-radius: 8px;
-    padding: 12px;
+    padding: clamp(8px, 1vh, 12px);
     cursor: pointer;
     text-align: center;
-    width: 110px;
+    width: clamp(85px, 8vw, 110px);
     color: #ded1b2 !important;
     transition: all 0.2s;
 }
@@ -420,16 +432,16 @@
 }
 
 .delegate-img {
-    width: 55px;
-    height: 55px;
+    width: clamp(40px, 3.8vw, 55px);
+    height: clamp(40px, 3.8vw, 55px);
     border-radius: 50%;
     border: 1px solid #d8b873;
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 
 .delegate-name {
     display: block;
-    font-size: 0.85rem;
+    font-size: clamp(0.72rem, 0.75vw, 0.85rem);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -438,13 +450,13 @@
 .delegate-bonus {
     font-weight: bold;
     display: block;
-    font-size: 1.15rem;
+    font-size: clamp(0.95rem, 1vw, 1.15rem);
     color: #d8b873 !important;
-    margin-top: 4px;
+    margin-top: 2px;
 }
 
 .cancel-delegation {
-    margin-top: 24px;
+    margin-top: clamp(14px, 2vh, 24px);
     background: transparent;
     color: #a39d8f;
     border: 1px solid rgba(255, 255, 255, 0.15);
@@ -452,6 +464,7 @@
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.2s;
+    font-size: clamp(0.8rem, 0.85vw, 0.95rem);
 }
 
 .cancel-delegation:hover {
@@ -465,23 +478,23 @@
     border: 2px solid #d8b873;
     border-radius: 12px;
     text-align: center;
-    padding: 50px 40px;
+    padding: clamp(25px, 3.5vh, 50px) clamp(20px, 2.5vw, 40px);
     margin: 0 auto;
-    width: 620px;
+    width: min(620px, 85vw);
     box-shadow: 0 0 45px rgba(0, 0, 0, 0.9), 0 0 25px rgba(216, 184, 115, 0.25);
 }
 
 .spotlight-title {
     font-family: 'Cinzel', serif;
     color: #d8b873 !important;
-    font-size: 1.8rem;
-    margin-bottom: 12px;
+    font-size: clamp(1.3rem, 1.6vw, 1.8rem);
+    margin-bottom: 10px;
 }
 
 .spotlight-subtext {
-    font-size: 1.25rem;
+    font-size: clamp(1rem, 1.15vw, 1.25rem);
     color: #f4eedb !important;
-    margin-bottom: 35px;
+    margin-bottom: clamp(20px, 2.5vh, 35px);
 }
 
 .spotlight-skill-highlight {
@@ -491,8 +504,8 @@
 
 .spotlight-btn {
     font-family: 'Cinzel', serif;
-    font-size: 1.35rem;
-    padding: 16px 36px;
+    font-size: clamp(1.1rem, 1.2vw, 1.35rem);
+    padding: clamp(12px, 1.4vh, 16px) clamp(22px, 2vw, 36px);
     background: linear-gradient(180deg, #d8b873 0%, #a48243 100%);
     color: #0b0c0f !important;
     border: 1px solid #ffe89e;
