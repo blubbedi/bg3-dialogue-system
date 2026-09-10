@@ -637,7 +637,7 @@ class BG3DialogueWindow extends Application {
         return foundry.utils.mergeObject(super.defaultOptions, { 
             id: "bg3-dialog-ui", 
             template: "modules/bg3-dialogue-system/templates/dialog.html", 
-            width: 1080, 
+            width: 1320, 
             height: "auto"
         });
     }
